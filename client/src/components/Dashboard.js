@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
   LogOut, User, MessageSquare, Paperclip, Send, File, Download, X, Sun, Moon, Trash2, Check, CheckCheck, Pencil, Mic, Square, Camera, Search, Share, ArrowLeft, Info, Clock
-} from 'lucide-react'; // +++ ADDED: Info, Clock icons
+} from 'lucide-react';
 import { storage, db } from '../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
@@ -20,7 +20,7 @@ const themes = {
   purple: { name: 'Purple', color: 'bg-purple-500', config: { '--color-primary-DEFAULT': '168 85 247', '--color-primary-light': '243 232 255', '--color-primary-dark': '107 33 168', '--color-background-alt': '250 245 255' } },
 };
 
-// +++ ADDED: Helper functions for encryption/decryption +++
+// Helper functions for encryption/decryption
 const getSecretKey = (chatRoomId) => {
   return CryptoJS.SHA256(chatRoomId).toString();
 };
@@ -55,6 +55,7 @@ const Dashboard = () => {
   const fileInputRef = useRef(null);
   const profilePicInputRef = useRef(null);
   const wallpaperInputRef = useRef(null);
+  const textareaRef = useRef(null);
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editingMessageContent, setEditingMessageContent] = useState("");
   const [isRecording, setIsRecording] = useState(false);
@@ -75,6 +76,7 @@ const Dashboard = () => {
   const [messageToForward, setMessageToForward] = useState(null);
   const [isForwarding, setIsForwarding] = useState(false);
   const [messageInfo, setMessageInfo] = useState(null);
+  const [fullScreenImage, setFullScreenImage] = useState(null); 
 
   const handleLogout = async () => {
     try {
@@ -92,6 +94,13 @@ const Dashboard = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  }, [newMessage]);
 
   const bringUserToTop = (userId) => {
     setUsers(prevUsers => {
@@ -420,12 +429,10 @@ const Dashboard = () => {
       let batchHasWrites = false;
       const now = new Date().toISOString();
       
-      // +++ THIS IS THE CORRECTED LOGIC +++
       snapshot.docs.forEach((doc) => {
         const msg = doc.data();
         if (msg.senderId === selectedChatUser.uid && !msg.read) {
           const updateData = { read: true, readAt: now };
-          // If it wasn't marked as delivered yet, mark it now.
           if (!msg.delivered) {
             updateData.delivered = true;
             updateData.deliveredAt = now;
@@ -537,7 +544,6 @@ const Dashboard = () => {
               <h3>Chat with {selectedChatUser.displayName || selectedChatUser.email.split('@')[0]}</h3>
             </div>
             <div className={`chat-messages-container flex-1 overflow-y-auto p-4 space-y-4 bg-cover bg-center relative`} style={{ backgroundImage: wallpaper ? `url(${wallpaper})` : 'none' }}>
-              {wallpaper && <div className={`absolute inset-0 ${darkMode ? 'bg-gray-900/70' : 'bg-background-alt/70'} backdrop-blur-sm`}></div>}
               <div className="relative z-10 space-y-4">
                 {loadingChat
                   ? <div />
@@ -556,7 +562,18 @@ const Dashboard = () => {
                               <div className={`relative rounded-xl transition-colors shadow-sm ${msg.senderId === currentUser.uid ? 'bg-primary text-white' : darkMode ? 'bg-gray-900/80 text-gray-200' : 'bg-white text-gray-800'}`}>
                                 <div className={`${msg.type === 'text' || msg.deleted ? 'p-3' : 'p-1.5 md:p-2'}`}>
                                   {msg.forwarded && <p className="text-xs opacity-70 mb-1 flex items-center gap-1"><Share size={12} /> Forwarded message</p>}
-                                  {msg.type === 'text' ? (<p className={`text-sm break-words ${msg.deleted ? 'italic opacity-70' : ''}`}>{decryptedText}</p>) : (<div>{msg.fileType?.startsWith('image/') ? (<img src={msg.fileUrl} alt={decryptedFileName} className="max-w-full h-auto rounded-md object-cover cursor-pointer" onClick={() => window.open(msg.fileUrl, '_blank')} onLoad={scrollToBottom} />) : msg.fileType?.startsWith('video/') ? (<video src={msg.fileUrl} controls className="w-64 rounded-md" />) : msg.type === 'audio' ? (<audio src={msg.fileUrl} controls className="w-64 h-12" />) : (<a href={msg.fileUrl} target="_blank" rel="noopener noreferrer" className={`flex items-center space-x-3 p-3 rounded-lg ${msg.senderId === currentUser.uid ? 'bg-primary-dark' : (darkMode ? 'bg-gray-700' : 'bg-gray-300')}`}><File className="w-8 h-8 flex-shrink-0" /><div className="flex-1 overflow-hidden"><p className="font-semibold text-sm truncate">{decryptedFileName}</p><p className="text-xs opacity-80">{formatFileSize(msg.fileSize)}</p></div><Download className="w-5 h-5 opacity-70" /></a>)}</div>)}
+                                  {msg.type === 'text' ? (<p className={`text-sm break-words ${msg.deleted ? 'italic opacity-70' : ''}`}>{decryptedText}</p>) : (<div>
+                                    {/* SIZING CHANGED TO 50% */}
+                                    {msg.fileType?.startsWith('image/') ? (
+                                      <img src={msg.fileUrl} alt={decryptedFileName} className="max-w-43 max-h-48 rounded-md object-cover cursor-pointer" onClick={() => setFullScreenImage(msg.fileUrl)} onLoad={scrollToBottom} />
+                                    ) : msg.fileType?.startsWith('video/') ? (
+                                      <video src={msg.fileUrl} controls className="w-64 rounded-md" />
+                                    ) : msg.type === 'audio' ? (
+                                      <audio src={msg.fileUrl} controls className="w-64 h-12" />
+                                    ) : (
+                                      <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer" className={`flex items-center space-x-3 p-3 rounded-lg ${msg.senderId === currentUser.uid ? 'bg-primary-dark' : (darkMode ? 'bg-gray-700' : 'bg-gray-300')}`}><File className="w-8 h-8 flex-shrink-0" /><div className="flex-1 overflow-hidden"><p className="font-semibold text-sm truncate">{decryptedFileName}</p><p className="text-xs opacity-80">{formatFileSize(msg.fileSize)}</p></div><Download className="w-5 h-5 opacity-70" /></a>
+                                    )}
+                                  </div>)}
                                 </div>
                                 {!msg.deleted && editingMessageId !== msg.id && (
                                   <div className={`absolute bottom-0 right-0 mb-1 mr-1 hidden group-hover:flex items-center space-x-1 p-1 rounded-full transition-opacity ${msg.senderId === currentUser.uid ? 'bg-primary-dark/50' : (darkMode ? 'bg-gray-700/50' : 'bg-gray-200/50')} backdrop-blur-sm`}>
@@ -587,10 +604,24 @@ const Dashboard = () => {
                 <div ref={messagesEndRef} />
               </div>
             </div>
-            <form onSubmit={handleSendMessage} className={`mt-auto p-2 sm:p-4 flex items-center space-x-2 border-t ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-transparent'}`}>
+            <form onSubmit={handleSendMessage} className={`mt-auto p-2 sm:p-4 flex items-start space-x-2 border-t ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-transparent'}`}>
               <input type="file" ref={fileInputRef} onChange={handleFileMessageUpload} className="hidden" />
               <motion.button type="button" onClick={() => fileInputRef.current?.click()} className={`p-3 rounded-xl transition-colors ${darkMode ? 'bg-gray-600 text-gray-300 hover:bg-gray-500' : 'bg-white hover:bg-gray-100'}`}><Paperclip className="w-5 h-5" /></motion.button>
-              <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder={isRecording ? "Recording..." : "Type a message..."} disabled={isRecording} className={`flex-1 px-4 py-2 rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-primary ${darkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-300'}`} />
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage(e);
+                  }
+                }}
+                placeholder={isRecording ? "Recording..." : "Type a message..."}
+                disabled={isRecording}
+                className={`flex-1 px-4 py-2 rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-primary resize-none overflow-y-auto max-h-40 custom-scrollbar ${darkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-300'}`}
+              />
               {newMessage.trim() === '' ? (isRecording ? (<motion.button type="button" onClick={handleStopRecording} className="p-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}><Square className="w-5 h-5" /></motion.button>) : (<motion.button type="button" onClick={handleStartRecording} className="p-3 bg-primary text-white rounded-xl hover:bg-primary-dark transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}><Mic className="w-5 h-5" /></motion.button>)) : (<motion.button type="submit" className="p-3 bg-primary text-white rounded-xl hover:bg-primary-dark transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} disabled={!newMessage.trim()}><Send className="w-5 h-5" /></motion.button>)}
             </form>
           </>)}
@@ -716,9 +747,35 @@ const Dashboard = () => {
           </motion.div>
         )}
 
+        {fullScreenImage && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setFullScreenImage(null)}
+          >
+            <motion.img
+              initial={{ scale: 0.5 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.5 }}
+              src={fullScreenImage}
+              alt="Full screen view"
+              className="max-w-[90vw] max-h-[90vh] object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              onClick={() => setFullScreenImage(null)}
+              className="absolute top-4 right-4 p-2 rounded-full bg-white/20 hover:bg-white/40"
+            >
+              <X className="w-6 h-6 text-white" />
+            </button>
+          </motion.div>
+        )}
+
       </AnimatePresence>
       <footer className={`text-center text-xs p-2 flex-shrink-0 ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>
-        © 2025 @Nain Baba. All rights reserved.
+        © 2025 @Nain Baba. 
       </footer>
     </div>
   );
