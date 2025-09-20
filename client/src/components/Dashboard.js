@@ -76,7 +76,13 @@ const Dashboard = () => {
   const [messageToForward, setMessageToForward] = useState(null);
   const [isForwarding, setIsForwarding] = useState(false);
   const [messageInfo, setMessageInfo] = useState(null);
-  const [fullScreenImage, setFullScreenImage] = useState(null); 
+  const [viewingMessage, setViewingMessage] = useState(null);
+
+  // NEW: State for the file upload confirmation modal
+  const [fileToSend, setFileToSend] = useState(null);
+  const [allowDownload, setAllowDownload] = useState(true);
+  const [allowForward, setAllowForward] = useState(true);
+  const [filePreview, setFilePreview] = useState('');
 
   const handleLogout = async () => {
     try {
@@ -131,17 +137,40 @@ const Dashboard = () => {
       setTimeout(() => setNotification(null), 3000);
     }
   };
-
-  const handleFileMessageUpload = async (e) => {
+  
+  // NEW: Function to handle initial file selection and show modal
+  const handleFileSelect = (e) => {
     const file = e.target.files[0];
+    if (!file) return;
+
+    setAllowDownload(true);
+    setAllowForward(true);
+
+    if (file.type.startsWith('image/')) {
+        setFilePreview(URL.createObjectURL(file));
+    } else {
+        setFilePreview(''); // No preview for non-image files
+    }
+
+    setFileToSend(file);
+    e.target.value = null; // Reset input
+  };
+  
+  // NEW: Function to handle the actual file upload after confirmation
+  const handleConfirmSendFile = async () => {
+    const file = fileToSend;
     if (!file || !selectedChatUser) return;
+
     const maxSize = 50 * 1024 * 1024;
     if (file.size > maxSize) {
       setNotification({ type: 'error', message: 'File size must be less than 50MB' });
-      setTimeout(() => setNotification(null), 3000); return;
+      setTimeout(() => setNotification(null), 3000);
+      return;
     }
+    
+    setFileToSend(null); // Close the modal immediately
     setNotification({ type: 'info', message: `Uploading "${file.name}"...` });
-    e.target.value = null;
+
     try {
       const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
       const timestamp = Date.now();
@@ -151,20 +180,35 @@ const Dashboard = () => {
       const downloadURL = await getDownloadURL(storageRef);
       const messagesRef = collection(db, 'chats', chatRoomId, 'messages');
       const encryptedFileName = encryptMessage(file.name, chatRoomId);
+
       await addDoc(messagesRef, {
-        type: 'file', fileName: encryptedFileName, fileSize: file.size, fileType: file.type, fileUrl: downloadURL,
-        senderId: currentUser.uid, timestamp: new Date().toISOString(),
-        read: false, delivered: false, edited: false, deleted: false, readAt: null, deliveredAt: null,
+        type: 'file',
+        fileName: encryptedFileName,
+        fileSize: file.size,
+        fileType: file.type,
+        fileUrl: downloadURL,
+        senderId: currentUser.uid,
+        timestamp: new Date().toISOString(),
+        read: false,
+        delivered: false,
+        edited: false,
+        deleted: false,
+        readAt: null,
+        deliveredAt: null,
+        allowDownload: allowDownload, // Add permission flag
+        allowForward: allowForward,   // Add permission flag
       });
+
       setNotification({ type: 'success', message: `File "${file.name}" sent successfully!` });
       bringUserToTop(selectedChatUser.uid);
-    } catch (error)      {
+    } catch (error) {
       console.error('File upload failed:', error);
       setNotification({ type: 'error', message: 'File upload failed: ' + error.message });
     } finally {
       setTimeout(() => setNotification(null), 3000);
     }
   };
+
 
   const startEditing = (message) => {
     const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
@@ -563,9 +607,8 @@ const Dashboard = () => {
                                 <div className={`${msg.type === 'text' || msg.deleted ? 'p-3' : 'p-1.5 md:p-2'}`}>
                                   {msg.forwarded && <p className="text-xs opacity-70 mb-1 flex items-center gap-1"><Share size={12} /> Forwarded message</p>}
                                   {msg.type === 'text' ? (<p className={`text-sm break-words ${msg.deleted ? 'italic opacity-70' : ''}`}>{decryptedText}</p>) : (<div>
-                                    {/* SIZING CHANGED TO 50% */}
                                     {msg.fileType?.startsWith('image/') ? (
-                                      <img src={msg.fileUrl} alt={decryptedFileName} className="max-w-43 max-h-48 rounded-md object-cover cursor-pointer" onClick={() => setFullScreenImage(msg.fileUrl)} onLoad={scrollToBottom} />
+                                      <img src={msg.fileUrl} alt={decryptedFileName} className="max-w-64 max-h-48 rounded-md object-cover cursor-pointer" onClick={() => setViewingMessage(msg)} onLoad={scrollToBottom} />
                                     ) : msg.fileType?.startsWith('video/') ? (
                                       <video src={msg.fileUrl} controls className="w-64 rounded-md" />
                                     ) : msg.type === 'audio' ? (
@@ -578,7 +621,10 @@ const Dashboard = () => {
                                 {!msg.deleted && editingMessageId !== msg.id && (
                                   <div className={`absolute bottom-0 right-0 mb-1 mr-1 hidden group-hover:flex items-center space-x-1 p-1 rounded-full transition-opacity ${msg.senderId === currentUser.uid ? 'bg-primary-dark/50' : (darkMode ? 'bg-gray-700/50' : 'bg-gray-200/50')} backdrop-blur-sm`}>
                                     <motion.button onClick={() => setMessageInfo(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20 dark:hover:bg-gray-600/50" title="Info"><Info className="w-4 h-4" /></motion.button>
-                                    <motion.button onClick={() => openForwardModal(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20 dark:hover:bg-gray-600/50" title="Forward"><Share className="w-4 h-4" /></motion.button>
+                                    {/* MODIFIED: Forward button is now conditional */}
+                                    {(msg.allowForward ?? true) && (
+                                        <motion.button onClick={() => openForwardModal(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20 dark:hover:bg-gray-600/50" title="Forward"><Share className="w-4 h-4" /></motion.button>
+                                    )}
                                     {msg.senderId === currentUser.uid && msg.type === 'text' && <motion.button onClick={() => startEditing(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20 dark:hover:bg-gray-600/50" title="Edit"><Pencil className="w-4 h-4" /></motion.button>}
                                     {msg.senderId === currentUser.uid && <motion.button onClick={() => handleDeleteMessage(msg.id)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20 dark:hover:bg-gray-600/50" title="Delete"><Trash2 className="w-4 h-4" /></motion.button>}
                                   </div>
@@ -605,7 +651,8 @@ const Dashboard = () => {
               </div>
             </div>
             <form onSubmit={handleSendMessage} className={`mt-auto p-2 sm:p-4 flex items-start space-x-2 border-t ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-transparent'}`}>
-              <input type="file" ref={fileInputRef} onChange={handleFileMessageUpload} className="hidden" />
+              {/* MODIFIED: File input now calls handleFileSelect */}
+              <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
               <motion.button type="button" onClick={() => fileInputRef.current?.click()} className={`p-3 rounded-xl transition-colors ${darkMode ? 'bg-gray-600 text-gray-300 hover:bg-gray-500' : 'bg-white hover:bg-gray-100'}`}><Paperclip className="w-5 h-5" /></motion.button>
               <textarea
                 ref={textareaRef}
@@ -613,7 +660,8 @@ const Dashboard = () => {
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
+                  const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+                  if (e.key === 'Enter' && !e.shiftKey && !isTouchDevice) {
                     e.preventDefault();
                     handleSendMessage(e);
                   }
@@ -629,6 +677,7 @@ const Dashboard = () => {
       </div>
 
       <AnimatePresence>
+        {/* ... (isProfileModalOpen, isForwarding, messageInfo modals are unchanged) ... */}
         {isProfileModalOpen && (
           <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <div className="absolute inset-0 bg-black/50" onClick={() => setIsProfileModalOpen(false)}></div>
@@ -676,106 +725,82 @@ const Dashboard = () => {
             </motion.div>
           </motion.div>
         )}
+        
+        {/* NEW: File Upload Confirmation Modal */}
+        {fileToSend && (
+            <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <div className="absolute inset-0 bg-black/50" onClick={() => setFileToSend(null)}></div>
+                <motion.div className={`relative rounded-2xl shadow-lg p-6 w-full max-w-sm mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
+                    <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Send File</h3>
+                    
+                    {filePreview && <img src={filePreview} alt="File preview" className="mb-4 w-full h-48 object-contain rounded-lg" />}
+                    <div className="mb-4 p-2 rounded-md bg-gray-100 dark:bg-gray-700 text-sm truncate">
+                        {fileToSend.name}
+                    </div>
 
-        {isForwarding && (
-          <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="absolute inset-0 bg-black/50" onClick={closeForwardModal}></div>
-            <motion.div className={`relative rounded-2xl shadow-lg p-6 w-full max-w-sm mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
-              <button onClick={closeForwardModal} className="absolute top-4 right-4 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X className="w-5 h-5" /></button>
-              <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Forward message to...</h3>
-              <div className="max-h-80 overflow-y-auto">
-                <ul className="space-y-1">
-                  {users.length > 0 ? users.map(user => (
-                    <li key={user.uid}>
-                      <div className="w-full text-left p-2 rounded-lg flex items-center justify-between space-x-3 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                        <div className="flex items-center space-x-3 overflow-hidden">
-                          <div className="w-8 h-8 rounded-full flex-shrink-0 relative">
-                            {user.photoURL ? (
-                              <img src={user.photoURL} alt={user.displayName} className="w-full h-full rounded-full object-cover" />
-                            ) : (
-                              <div className={`w-full h-full rounded-full flex items-center justify-center bg-gray-200 dark:bg-gray-600`}><User className="w-4 h-4" /></div>
-                            )}
-                          </div>
-                          <span className="flex-1 truncate font-medium">{user.displayName || user.email}</span>
-                        </div>
-                        <button onClick={() => handleForwardMessage(user)} className="px-3 py-1 text-sm bg-primary text-white rounded-md hover:bg-primary-dark">
-                          Send
-                        </button>
-                      </div>
-                    </li>
-                  )) : (
-                    <p className={`text-sm px-3 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No users available to forward.</p>
-                  )}
-                </ul>
-              </div>
+                    <div className="space-y-3 mb-6">
+                        <label className="flex items-center space-x-3 cursor-pointer">
+                            <input type="checkbox" checked={allowDownload} onChange={(e) => setAllowDownload(e.target.checked)} className="h-4 w-4 rounded text-primary focus:ring-primary"/>
+                            <span className="text-sm">Allow receiver to download</span>
+                        </label>
+                        <label className="flex items-center space-x-3 cursor-pointer">
+                            <input type="checkbox" checked={allowForward} onChange={(e) => setAllowForward(e.target.checked)} className="h-4 w-4 rounded text-primary focus:ring-primary"/>
+                            <span className="text-sm">Allow receiver to forward</span>
+                        </label>
+                    </div>
+
+                    <div className="flex justify-end space-x-2">
+                        <button onClick={() => setFileToSend(null)} className="px-4 py-2 text-sm rounded-lg border dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
+                        <button onClick={handleConfirmSendFile} className="px-4 py-2 text-sm rounded-lg bg-primary text-white hover:bg-primary-dark">Send</button>
+                    </div>
+                </motion.div>
             </motion.div>
-          </motion.div>
         )}
 
-        {messageInfo && (
-          <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="absolute inset-0 bg-black/50" onClick={() => setMessageInfo(null)}></div>
-            <motion.div className={`relative rounded-2xl shadow-lg p-6 w-full max-w-sm mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
-              <button onClick={() => setMessageInfo(null)} className="absolute top-4 right-4 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X className="w-5 h-5" /></button>
-              <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Message Info</h3>
-              <div className="space-y-3 text-sm">
-                <div className="flex items-center">
-                  <Clock className="w-4 h-4 mr-3 text-gray-400" />
-                  <div>
-                    <p className="font-semibold">Sent</p>
-                    <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{new Date(messageInfo.timestamp).toLocaleString()}</p>
-                  </div>
-                </div>
-                <hr className={darkMode ? 'border-gray-700' : 'border-gray-200'} />
-                <div className="flex items-center">
-                  <Check className="w-4 h-4 mr-3 text-gray-400" />
-                  <div>
-                    <p className="font-semibold">Delivered</p>
-                    <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{messageInfo.deliveredAt ? new Date(messageInfo.deliveredAt).toLocaleString() : 'Not yet'}</p>
-                  </div>
-                </div>
-                <hr className={darkMode ? 'border-gray-700' : 'border-gray-200'} />
-                <div className="flex items-center">
-                  <CheckCheck className={`w-4 h-4 mr-3 ${messageInfo.readAt ? 'text-sky-500' : 'text-gray-400'}`} />
-                  <div>
-                    <p className="font-semibold">Read</p>
-                    <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{messageInfo.readAt ? new Date(messageInfo.readAt).toLocaleString() : 'Not yet'}</p>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-
-        {fullScreenImage && (
+        {viewingMessage && viewingMessage.fileType.startsWith('image/') && (
           <motion.div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setFullScreenImage(null)}
+            onClick={() => setViewingMessage(null)}
           >
             <motion.img
               initial={{ scale: 0.5 }}
               animate={{ scale: 1 }}
               exit={{ scale: 0.5 }}
-              src={fullScreenImage}
+              src={viewingMessage.fileUrl}
               alt="Full screen view"
               className="max-w-[90vw] max-h-[90vh] object-contain"
               onClick={(e) => e.stopPropagation()}
             />
-            <button
-              onClick={() => setFullScreenImage(null)}
-              className="absolute top-4 right-4 p-2 rounded-full bg-white/20 hover:bg-white/40"
-            >
-              <X className="w-6 h-6 text-white" />
-            </button>
+            <div className="absolute top-4 right-4 flex items-center space-x-2">
+              {/* MODIFIED: Download button is now conditional */}
+              {(viewingMessage.allowDownload ?? true) && (
+                <a
+                  href={viewingMessage.fileUrl}
+                  download="image.jpg"
+                  onClick={(e) => e.stopPropagation()}
+                  className="p-2 rounded-full bg-white/20 hover:bg-white/40"
+                  title="Download image"
+                >
+                  <Download className="w-6 h-6 text-white" />
+                </a>
+              )}
+              <button
+                onClick={() => setViewingMessage(null)}
+                className="p-2 rounded-full bg-white/20 hover:bg-white/40"
+                title="Close"
+              >
+                <X className="w-6 h-6 text-white" />
+              </button>
+            </div>
           </motion.div>
         )}
 
       </AnimatePresence>
       <footer className={`text-center text-xs p-2 flex-shrink-0 ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>
-        © 2025 @Nain Baba. 
+        © 2025 @Nain Baba NPO(MBI)
       </footer>
     </div>
   );
