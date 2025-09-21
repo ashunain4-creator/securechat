@@ -9,7 +9,7 @@ import {
 import { storage, db } from '../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
-  collection, addDoc, onSnapshot, query, orderBy, getDocs, where, doc, writeBatch, updateDoc, getDoc, limit
+  collection, addDoc, onSnapshot, query, orderBy, getDocs, where, doc, writeBatch, updateDoc, getDoc, limit, setDoc
 } from 'firebase/firestore';
 import { updateProfile } from "firebase/auth";
 
@@ -82,6 +82,11 @@ const Dashboard = () => {
   const [filePreview, setFilePreview] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
   const [activeMessageMenu, setActiveMessageMenu] = useState(null);
+  
+  // --- Start of new code for typing indicator ---
+  const [isRecipientTyping, setIsRecipientTyping] = useState(false);
+  const typingTimeoutRef = useRef(null);
+  // --- End of new code for typing indicator ---
 
   const handleLogout = async () => {
     try {
@@ -98,7 +103,7 @@ const Dashboard = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isRecipientTyping]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -525,6 +530,70 @@ const Dashboard = () => {
     return () => unsubscribers.forEach(unsub => unsub());
   }, [users, currentUser, selectedChatUser]);
 
+  // --- Start of new useEffects for typing indicator ---
+
+  // Effect to update the current user's typing status in Firestore
+  useEffect(() => {
+    const updateTypingStatus = async (isTyping) => {
+      if (!selectedChatUser) return;
+      try {
+        const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
+        const chatRoomRef = doc(db, 'chats', chatRoomId);
+        await setDoc(chatRoomRef, { 
+          typingStatus: { [currentUser.uid]: isTyping } 
+        }, { merge: true });
+      } catch (error) {
+        console.error("Could not update typing status:", error);
+      }
+    };
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    if (newMessage.trim()) {
+      updateTypingStatus(true);
+      typingTimeoutRef.current = setTimeout(() => {
+        updateTypingStatus(false);
+      }, 2000); // User is considered "stopped" after 2 seconds
+    } else {
+      updateTypingStatus(false);
+    }
+
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      // Cleanup: ensure typing status is false when chat changes or component unmounts
+      updateTypingStatus(false);
+    };
+  }, [newMessage, selectedChatUser, currentUser]);
+
+  // Effect to listen for the other user's typing status
+  useEffect(() => {
+    if (!selectedChatUser) return;
+
+    const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
+    const chatRoomRef = doc(db, 'chats', chatRoomId);
+
+    const unsubscribe = onSnapshot(chatRoomRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const recipientIsTyping = data.typingStatus?.[selectedChatUser.uid] || false;
+        setIsRecipientTyping(recipientIsTyping);
+      } else {
+        setIsRecipientTyping(false);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      setIsRecipientTyping(false);
+    };
+  }, [selectedChatUser, currentUser]);
+
+  // --- End of new useEffects for typing indicator ---
+
   if (!currentUser) { return (<div className="flex items-center justify-center min-h-screen bg-gray-900"><p className="text-lg text-gray-300">Loading Dashboard...</p></div>); }
 
   const modalVariants = {
@@ -659,31 +728,55 @@ const Dashboard = () => {
                   <div className={`p-2 mx-2 sm:mx-4 border-t-2 border-primary ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
                     <div className="flex justify-between items-center">
                       <div>
-                          <p className="text-sm font-bold text-primary">Replying to {replyingTo.senderId === currentUser.uid ? 'yourself' : selectedChatUser.displayName}</p>
-                          <p className={`text-xs truncate max-w-xs sm:max-w-md ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                            {replyingTo.fileType?.startsWith('image/') ? '📷 Photo' : replyingTo.fileType ? '📎 Attachment' : decryptMessage(replyingTo.text, [currentUser.uid, selectedChatUser.uid].sort().join('_'))}
-                          </p>
+                        <p className="text-sm font-bold text-primary">Replying to {replyingTo.senderId === currentUser.uid ? 'yourself' : selectedChatUser.displayName}</p>
+                        <p className={`text-xs truncate max-w-xs sm:max-w-md ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                          {replyingTo.fileType?.startsWith('image/') ? '📷 Photo' : replyingTo.fileType ? '📎 Attachment' : decryptMessage(replyingTo.text, [currentUser.uid, selectedChatUser.uid].sort().join('_'))}
+                        </p>
                       </div>
                       <button onClick={() => setReplyingTo(null)} className="p-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600"><X size={16}/></button>
                     </div>
                   </div>
                 )}
+                
+                {/* --- Start of new typing indicator JSX --- */}
+                <AnimatePresence>
+                  {isRecipientTyping && (
+                    <motion.div
+                      className="px-4 pt-1 text-sm text-gray-500 dark:text-gray-400"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <div className="flex space-x-1">
+                          <motion.span animate={{ y: [0, -2, 0] }} transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut" }} className="w-1.5 h-1.5 bg-gray-500 rounded-full"></motion.span>
+                          <motion.span animate={{ y: [0, -2, 0] }} transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: 0.1 }} className="w-1.5 h-1.5 bg-gray-500 rounded-full"></motion.span>
+                          <motion.span animate={{ y: [0, -2, 0] }} transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: 0.2 }} className="w-1.5 h-1.5 bg-gray-500 rounded-full"></motion.span>
+                        </div>
+                        <span>typing...</span>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                {/* --- End of new typing indicator JSX --- */}
+
                 <form onSubmit={handleSendMessage} className={`p-2 sm:p-4 flex items-start space-x-2 ${darkMode ? 'bg-gray-800' : 'bg-transparent'}`}>
-                    <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
-                    <motion.button type="button" onClick={() => fileInputRef.current?.click()} className={`p-3 rounded-xl transition-colors ${darkMode ? 'bg-gray-600 text-gray-300 hover:bg-gray-500' : 'bg-white hover:bg-gray-100'}`}><Paperclip className="w-5 h-5" /></motion.button>
-                    <textarea ref={textareaRef} rows={1} value={newMessage} onChange={(e) => setNewMessage(e.target.value)}
-                        onKeyDown={(e) => {
-                            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-                            if (e.key === 'Enter' && !e.shiftKey && !isTouchDevice) {
-                                e.preventDefault();
-                                handleSendMessage(e);
-                            }
-                        }}
-                        placeholder={isRecording ? "Recording..." : "Type a message..."}
-                        disabled={isRecording}
-                        className={`flex-1 px-4 py-2 rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-primary resize-none overflow-y-auto max-h-40 custom-scrollbar ${darkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-300'}`}
-                    />
-                    {newMessage.trim() === '' ? (isRecording ? (<motion.button type="button" onClick={handleStopRecording} className="p-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}><Square className="w-5 h-5" /></motion.button>) : (<motion.button type="button" onClick={handleStartRecording} className="p-3 bg-primary text-white rounded-xl hover:bg-primary-dark transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}><Mic className="w-5 h-5" /></motion.button>)) : (<motion.button type="submit" className="p-3 bg-primary text-white rounded-xl hover:bg-primary-dark transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} disabled={!newMessage.trim()}><Send className="w-5 h-5" /></motion.button>)}
+                  <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+                  <motion.button type="button" onClick={() => fileInputRef.current?.click()} className={`p-3 rounded-xl transition-colors ${darkMode ? 'bg-gray-600 text-gray-300 hover:bg-gray-500' : 'bg-white hover:bg-gray-100'}`}><Paperclip className="w-5 h-5" /></motion.button>
+                  <textarea ref={textareaRef} rows={1} value={newMessage} onChange={(e) => setNewMessage(e.target.value)}
+                      onKeyDown={(e) => {
+                          const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+                          if (e.key === 'Enter' && !e.shiftKey && !isTouchDevice) {
+                              e.preventDefault();
+                              handleSendMessage(e);
+                          }
+                      }}
+                      placeholder={isRecording ? "Recording..." : "Type a message..."}
+                      disabled={isRecording}
+                      className={`flex-1 px-4 py-2 rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-primary resize-none overflow-y-auto max-h-40 custom-scrollbar ${darkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-300'}`}
+                  />
+                  {newMessage.trim() === '' ? (isRecording ? (<motion.button type="button" onClick={handleStopRecording} className="p-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}><Square className="w-5 h-5" /></motion.button>) : (<motion.button type="button" onClick={handleStartRecording} className="p-3 bg-primary text-white rounded-xl hover:bg-primary-dark transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}><Mic className="w-5 h-5" /></motion.button>)) : (<motion.button type="submit" className="p-3 bg-primary text-white rounded-xl hover:bg-primary-dark transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} disabled={!newMessage.trim()}><Send className="w-5 h-5" /></motion.button>)}
                 </form>
               </div>
             </>
