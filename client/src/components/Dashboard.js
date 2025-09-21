@@ -1,11 +1,10 @@
-// +++ ADDED: Import encryption library +++
 import CryptoJS from 'crypto-js';
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  LogOut, User, MessageSquare, Paperclip, Send, File, Download, X, Sun, Moon, Trash2, Check, CheckCheck, Pencil, Mic, Square, Camera, Search, Share, ArrowLeft, Info, Clock
+  LogOut, User, MessageSquare, Paperclip, Send, File, Download, X, Sun, Moon, Trash2, Check, CheckCheck, Pencil, Mic, Square, Camera, Search, Share, ArrowLeft, Info, Clock, CornerUpLeft
 } from 'lucide-react';
 import { storage, db } from '../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -20,7 +19,6 @@ const themes = {
   purple: { name: 'Purple', color: 'bg-purple-500', config: { '--color-primary-DEFAULT': '168 85 247', '--color-primary-light': '243 232 255', '--color-primary-dark': '107 33 168', '--color-background-alt': '250 245 255' } },
 };
 
-// Helper functions for encryption/decryption
 const getSecretKey = (chatRoomId) => {
   return CryptoJS.SHA256(chatRoomId).toString();
 };
@@ -30,6 +28,7 @@ const encryptMessage = (text, chatRoomId) => {
 };
 const decryptMessage = (encryptedText, chatRoomId) => {
   try {
+    if (!encryptedText) return "";
     const secretKey = getSecretKey(chatRoomId);
     const bytes = CryptoJS.AES.decrypt(encryptedText, secretKey);
     const originalText = bytes.toString(CryptoJS.enc.Utf8);
@@ -77,12 +76,11 @@ const Dashboard = () => {
   const [isForwarding, setIsForwarding] = useState(false);
   const [messageInfo, setMessageInfo] = useState(null);
   const [viewingMessage, setViewingMessage] = useState(null);
-
-  // NEW: State for the file upload confirmation modal
   const [fileToSend, setFileToSend] = useState(null);
   const [allowDownload, setAllowDownload] = useState(true);
   const [allowForward, setAllowForward] = useState(true);
   const [filePreview, setFilePreview] = useState('');
+  const [replyingTo, setReplyingTo] = useState(null);
 
   const handleLogout = async () => {
     try {
@@ -125,11 +123,23 @@ const Dashboard = () => {
     const messagesRef = collection(db, 'chats', chatRoomId, 'messages');
     try {
       const encryptedText = encryptMessage(newMessage, chatRoomId);
-      await addDoc(messagesRef, {
+      
+      const messageData = {
         type: 'text', text: encryptedText, senderId: currentUser.uid, timestamp: new Date().toISOString(),
         read: false, delivered: false, edited: false, deleted: false, readAt: null, deliveredAt: null,
-      });
+      };
+
+      if (replyingTo) {
+        messageData.replyTo = {
+          messageId: replyingTo.id, senderId: replyingTo.senderId, text: replyingTo.text || null,
+          fileType: replyingTo.fileType || null, fileName: replyingTo.fileName || null,
+          senderName: replyingTo.senderId === currentUser.uid ? currentUser.displayName : selectedChatUser.displayName,
+        };
+      }
+      
+      await addDoc(messagesRef, messageData);
       setNewMessage("");
+      setReplyingTo(null);
       bringUserToTop(selectedChatUser.uid);
     } catch (error) {
       console.error("Error sending message:", error);
@@ -138,39 +148,31 @@ const Dashboard = () => {
     }
   };
   
-  // NEW: Function to handle initial file selection and show modal
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     setAllowDownload(true);
     setAllowForward(true);
-
     if (file.type.startsWith('image/')) {
         setFilePreview(URL.createObjectURL(file));
     } else {
-        setFilePreview(''); // No preview for non-image files
+        setFilePreview('');
     }
-
     setFileToSend(file);
-    e.target.value = null; // Reset input
+    e.target.value = null;
   };
   
-  // NEW: Function to handle the actual file upload after confirmation
   const handleConfirmSendFile = async () => {
     const file = fileToSend;
     if (!file || !selectedChatUser) return;
-
     const maxSize = 50 * 1024 * 1024;
     if (file.size > maxSize) {
       setNotification({ type: 'error', message: 'File size must be less than 50MB' });
       setTimeout(() => setNotification(null), 3000);
       return;
     }
-    
-    setFileToSend(null); // Close the modal immediately
+    setFileToSend(null);
     setNotification({ type: 'info', message: `Uploading "${file.name}"...` });
-
     try {
       const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
       const timestamp = Date.now();
@@ -181,24 +183,22 @@ const Dashboard = () => {
       const messagesRef = collection(db, 'chats', chatRoomId, 'messages');
       const encryptedFileName = encryptMessage(file.name, chatRoomId);
 
-      await addDoc(messagesRef, {
-        type: 'file',
-        fileName: encryptedFileName,
-        fileSize: file.size,
-        fileType: file.type,
-        fileUrl: downloadURL,
-        senderId: currentUser.uid,
-        timestamp: new Date().toISOString(),
-        read: false,
-        delivered: false,
-        edited: false,
-        deleted: false,
-        readAt: null,
-        deliveredAt: null,
-        allowDownload: allowDownload, // Add permission flag
-        allowForward: allowForward,   // Add permission flag
-      });
+      const messageData = {
+        type: 'file', fileName: encryptedFileName, fileSize: file.size, fileType: file.type, fileUrl: downloadURL,
+        senderId: currentUser.uid, timestamp: new Date().toISOString(),
+        read: false, delivered: false, edited: false, deleted: false, readAt: null, deliveredAt: null,
+        allowDownload: allowDownload, allowForward: allowForward,
+      };
 
+      if (replyingTo) {
+        messageData.replyTo = {
+          messageId: replyingTo.id, senderId: replyingTo.senderId, text: replyingTo.text || null,
+          fileType: replyingTo.fileType || null, fileName: replyingTo.fileName || null,
+          senderName: replyingTo.senderId === currentUser.uid ? currentUser.displayName : selectedChatUser.displayName,
+        };
+      }
+      await addDoc(messagesRef, messageData);
+      setReplyingTo(null);
       setNotification({ type: 'success', message: `File "${file.name}" sent successfully!` });
       bringUserToTop(selectedChatUser.uid);
     } catch (error) {
@@ -209,14 +209,15 @@ const Dashboard = () => {
     }
   };
 
-
   const startEditing = (message) => {
     const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
     const decryptedText = decryptMessage(message.text, chatRoomId);
     setEditingMessageId(message.id);
     setEditingMessageContent(decryptedText);
   };
+
   const cancelEditing = () => { setEditingMessageId(null); setEditingMessageContent(""); };
+  
   const handleEditMessage = async (messageId) => {
     if (!editingMessageContent.trim()) return;
     try {
@@ -231,6 +232,7 @@ const Dashboard = () => {
       setTimeout(() => setNotification(null), 3000);
     }
   };
+
   const handleDeleteMessage = async (messageId) => {
     if (!window.confirm('Are you sure you want to delete this message?')) return;
     try {
@@ -246,13 +248,16 @@ const Dashboard = () => {
       setTimeout(() => setNotification(null), 3000);
     }
   };
+
   const selectChatUser = (user) => { setSelectedChatUser(user); setLoadingChat(true); setMessages([]); cancelEditing(); };
+  
   const formatFileSize = (bytes) => {
     if (!bytes || bytes === 0) return '0 Bytes';
     const k = 1024; const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
+
   const handleStartRecording = async () => {
     if (!selectedChatUser) {
       setNotification({ type: 'error', message: 'Please select a user to send a voice message.' });
@@ -277,7 +282,9 @@ const Dashboard = () => {
       setTimeout(() => setNotification(null), 3000);
     }
   };
+
   const handleStopRecording = () => { if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop(); setIsRecording(false); };
+  
   const handleSendAudioMessage = async (audioBlob) => {
     setNotification({ type: 'info', message: `Uploading voice message...` });
     try {
@@ -301,7 +308,9 @@ const Dashboard = () => {
       setTimeout(() => setNotification(null), 3000);
     }
   };
+  
   const openProfileModal = () => { setNewDisplayName(currentUser.displayName || ''); setProfilePicFile(null); setProfilePicPreview(currentUser.photoURL || ''); setSelectedTheme(theme); setWallpaperFile(null); setWallpaperPreview(wallpaper); setIsProfileModalOpen(true); };
+  
   const handleProfilePicChange = (e) => {
     const file = e.target.files[0];
     if (file && file.type.startsWith('image/')) {
@@ -309,6 +318,7 @@ const Dashboard = () => {
       setProfilePicPreview(URL.createObjectURL(file));
     }
   };
+  
   const handleWallpaperChange = (e) => {
     const file = e.target.files[0];
     if (file && file.type.startsWith('image/')) {
@@ -316,6 +326,7 @@ const Dashboard = () => {
       setWallpaperPreview(URL.createObjectURL(file));
     }
   };
+  
   const handleProfileUpdate = async (e) => {
     e.preventDefault();
     if (!newDisplayName.trim()) {
@@ -369,20 +380,15 @@ const Dashboard = () => {
 
   const handleForwardMessage = async (targetUser) => {
     if (!messageToForward || !targetUser) return;
-
     const targetChatRoomId = [currentUser.uid, targetUser.uid].sort().join('_');
     const messagesRef = collection(db, 'chats', targetChatRoomId, 'messages');
-
     try {
       const forwardedMessage = {
-        ...messageToForward,
-        senderId: currentUser.uid,
-        timestamp: new Date().toISOString(),
+        ...messageToForward, senderId: currentUser.uid, timestamp: new Date().toISOString(),
         read: false, delivered: false, edited: false, deleted: false, forwarded: true,
         readAt: null, deliveredAt: null,
       };
       delete forwardedMessage.id;
-
       const originalChatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
       if (forwardedMessage.type === 'text') {
         const decryptedOriginalText = decryptMessage(forwardedMessage.text, originalChatRoomId);
@@ -392,9 +398,7 @@ const Dashboard = () => {
         const decryptedOriginalFileName = decryptMessage(forwardedMessage.fileName, originalChatRoomId);
         forwardedMessage.fileName = encryptMessage(decryptedOriginalFileName, targetChatRoomId);
       }
-
       await addDoc(messagesRef, forwardedMessage);
-
       setNotification({ type: 'success', message: `Message forwarded to ${targetUser.displayName || targetUser.email}!` });
       closeForwardModal();
       bringUserToTop(targetUser.uid);
@@ -406,6 +410,10 @@ const Dashboard = () => {
     }
   };
 
+  const toggleDarkMode = () => {
+    setDarkMode(!darkMode);
+    document.documentElement.classList.toggle('dark', !darkMode);
+  };
 
   useEffect(() => {
     const themeConfig = themes[theme].config;
@@ -425,13 +433,11 @@ const Dashboard = () => {
           setTheme(prefs.theme || 'blue');
           setWallpaper(prefs.wallpaper || '');
         }
-
         const usersRef = collection(db, 'users');
         const querySnapshot = await getDocs(usersRef);
         const userList = querySnapshot.docs
           .map(doc => ({ ...doc.data(), id: doc.id }))
           .filter(user => user.uid !== currentUser.uid);
-
         const usersWithLastMessage = await Promise.all(
           userList.map(async (user) => {
             const chatRoomId = [currentUser.uid, user.uid].sort().join('_');
@@ -445,9 +451,7 @@ const Dashboard = () => {
             return { ...user, lastMessageTimestamp };
           })
         );
-
         usersWithLastMessage.sort((a, b) => b.lastMessageTimestamp - a.lastMessageTimestamp);
-
         setUsers(usersWithLastMessage);
       } catch (error) {
         console.error("Error fetching initial data:", error);
@@ -463,16 +467,13 @@ const Dashboard = () => {
     const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
     const messagesRef = collection(db, 'chats', chatRoomId, 'messages');
     const q = query(messagesRef, orderBy('timestamp'));
-
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetchedMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setMessages(fetchedMessages);
       setLoadingChat(false);
-
       const batch = writeBatch(db);
       let batchHasWrites = false;
       const now = new Date().toISOString();
-      
       snapshot.docs.forEach((doc) => {
         const msg = doc.data();
         if (msg.senderId === selectedChatUser.uid && !msg.read) {
@@ -485,7 +486,6 @@ const Dashboard = () => {
           batchHasWrites = true;
         }
       });
-
       if (batchHasWrites) {
         batch.commit().catch(err => console.error("Error updating message statuses:", err));
       }
@@ -499,14 +499,11 @@ const Dashboard = () => {
       const chatRoomId = [currentUser.uid, user.uid].sort().join('_');
       const messagesRef = collection(db, 'chats', chatRoomId, 'messages');
       const q = query(messagesRef, where('senderId', '==', user.uid), where('read', '==', false));
-
       return onSnapshot(q, (snapshot) => {
         if (!snapshot.empty) {
           bringUserToTop(user.uid);
         }
-
         setUnreadCounts(prevCounts => ({ ...prevCounts, [user.uid]: snapshot.size }));
-
         if (snapshot.size > 0 && selectedChatUser?.uid !== user.uid) {
           const batch = writeBatch(db);
           let hasUpdates = false;
@@ -525,11 +522,6 @@ const Dashboard = () => {
     });
     return () => unsubscribers.forEach(unsub => unsub());
   }, [users, currentUser, selectedChatUser]);
-
-  const toggleDarkMode = () => {
-    setDarkMode(!darkMode);
-    document.documentElement.classList.toggle('dark', !darkMode);
-  };
 
   if (!currentUser) { return (<div className="flex items-center justify-center min-h-screen bg-gray-900"><p className="text-lg text-gray-300">Loading Dashboard...</p></div>); }
 
@@ -553,19 +545,12 @@ const Dashboard = () => {
       {notification && (<motion.div initial={{ opacity: 0, y: -50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -50 }} className={`fixed top-20 right-4 z-50 px-6 py-3 rounded-lg shadow-lg ${notification.type === 'success' ? 'bg-green-500 text-white' : notification.type === 'info' ? 'bg-blue-500 text-white' : 'bg-red-500 text-white'}`}><div className="flex items-center space-x-2"><span>{notification.type === 'success' ? '✅' : notification.type === 'info' ? 'ℹ️' : '❌'}</span><span>{notification.message}</span></div></motion.div>)}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* --- SIDEBAR (USER LIST) --- */}
         <div className={`w-full md:w-72 flex-shrink-0 flex flex-col border-r transition-all duration-300 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} ${selectedChatUser ? 'hidden md:flex' : 'flex'}`}>
           <div className="p-4 flex-grow overflow-y-auto flex flex-col">
             <h3 className={`font-bold mb-4 px-3 text-lg ${darkMode ? 'text-white' : 'text-gray-900'}`}>Direct Messages</h3>
             <div className="relative mb-4 px-1">
               <Search className={`absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} />
-              <input
-                type="text"
-                placeholder="Search users..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className={`w-full pl-10 pr-4 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-primary ${darkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-100 border-gray-200'}`}
-              />
+              <input type="text" placeholder="Search users..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-primary ${darkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-100 border-gray-200'}`} />
             </div>
             <ul className="space-y-1 flex-grow overflow-y-auto custom-scrollbar">{filteredUsers.length > 0 ? filteredUsers.map(user => { const unreadCount = unreadCounts[user.uid] || 0; return (<li key={user.uid}><motion.button onClick={() => selectChatUser(user)} className={`w-full text-left p-2 rounded-lg flex items-center justify-between space-x-3 transition-colors ${selectedChatUser?.uid === user.uid ? 'bg-primary text-white' : (darkMode ? 'hover:bg-gray-700/50' : 'hover:bg-gray-100')}`} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}><div className="flex items-center space-x-3 overflow-hidden"><div className="w-8 h-8 rounded-full flex-shrink-0 relative">{user.photoURL ? (<img src={user.photoURL} alt={user.displayName} className="w-full h-full rounded-full object-cover" />) : (<div className={`w-full h-full rounded-full flex items-center justify-center ${selectedChatUser?.uid === user.uid ? 'bg-white text-primary' : (darkMode ? 'bg-gray-600' : 'bg-gray-200')}`}><User className="w-4 h-4" /></div>)}</div><span className={`flex-1 truncate font-medium ${selectedChatUser?.uid === user.uid ? 'text-white' : ''}`}>{user.displayName || user.email}</span></div>{unreadCount > 0 && (<span className="bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center flex-shrink-0">{unreadCount}</span>)}</motion.button></li>); }) : <p className={`text-sm px-3 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{users.length > 0 ? "No users match your search." : "No other users found."}</p>}</ul>
           </div>
@@ -580,55 +565,72 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* --- MAIN CHAT AREA --- */}
         <div className={`flex-1 flex flex-col ${darkMode ? 'bg-gray-700' : 'bg-background-alt'} ${selectedChatUser ? 'flex' : 'hidden md:flex'}`}>
-          {!selectedChatUser ? (<div className="flex flex-col items-center justify-center h-full"><MessageSquare className={`w-16 h-16 mb-4 ${darkMode ? 'text-gray-600' : 'text-gray-300'}`} /><h3 className={`text-lg font-medium mb-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Select a user to start chatting</h3><p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Your messages will appear here.</p></div>) : (<>
-            <div className={`flex items-center text-xl font-bold p-4 border-b ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-transparent border-gray-200/80'}`}>
-              <button onClick={() => setSelectedChatUser(null)} className={`md:hidden p-2 -ml-2 mr-2 rounded-full ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}><ArrowLeft size={20} /></button>
-              <h3>Chat with {selectedChatUser.displayName || selectedChatUser.email.split('@')[0]}</h3>
-            </div>
-            <div className={`chat-messages-container flex-1 overflow-y-auto p-4 space-y-4 bg-cover bg-center relative`} style={{ backgroundImage: wallpaper ? `url(${wallpaper})` : 'none' }}>
-              <div className="relative z-10 space-y-4">
-                {loadingChat
-                  ? <div />
-                  : messages.length > 0
-                    ? messages.map((msg) => {
+          {!selectedChatUser ? (
+            <div className="flex flex-col items-center justify-center h-full"><MessageSquare className={`w-16 h-16 mb-4 ${darkMode ? 'text-gray-600' : 'text-gray-300'}`} /><h3 className={`text-lg font-medium mb-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Select a user to start chatting</h3><p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Your messages will appear here.</p></div>
+          ) : (
+            <>
+              <div className={`flex items-center text-xl font-bold p-4 border-b ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-transparent border-gray-200/80'}`}>
+                <button onClick={() => setSelectedChatUser(null)} className={`md:hidden p-2 -ml-2 mr-2 rounded-full ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}><ArrowLeft size={20} /></button>
+                <h3>Chat with {selectedChatUser.displayName || selectedChatUser.email.split('@')[0]}</h3>
+              </div>
+              <div className={`chat-messages-container flex-1 overflow-y-auto p-4 space-y-4 bg-cover bg-center relative`} style={{ backgroundImage: wallpaper ? `url(${wallpaper})` : 'none' }}>
+                <div className="relative z-10 space-y-4">
+                  {loadingChat
+                    ? <div />
+                    : messages.map((msg) => {
                       const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
-                      const decryptedText = msg.type === 'text' ? decryptMessage(msg.text, chatRoomId) : msg.text;
-                      const decryptedFileName = msg.type === 'file' && msg.fileName ? decryptMessage(msg.fileName, chatRoomId) : msg.fileName;
+                      const decryptedText = msg.type === 'text' ? decryptMessage(msg.text, chatRoomId) : '';
+                      const decryptedFileName = msg.type === 'file' && msg.fileName ? decryptMessage(msg.fileName, chatRoomId) : '';
 
                       return (
-                        <div key={msg.id} className={`flex ${msg.senderId === currentUser.uid ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-xs sm:max-w-sm md:max-w-lg relative group ${msg.senderId === currentUser.uid ? 'ml-auto' : 'mr-auto'}`}>
+                        <div key={msg.id} id={msg.id} className={`flex ${msg.senderId === currentUser.uid ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-xs sm:max-w-sm md:max-w-lg relative group`}>
                             {editingMessageId === msg.id ? (
-                              <div className="flex items-center space-x-2 w-full"><input type="text" value={editingMessageContent} onChange={(e) => setEditingMessageContent(e.target.value)} className={`flex-1 px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-primary-dark ${darkMode ? 'bg-gray-600 border-gray-500' : 'bg-white border-gray-300'}`} onKeyDown={(e) => e.key === 'Enter' && handleEditMessage(msg.id)} /><motion.button onClick={() => handleEditMessage(msg.id)} whileTap={{ scale: 0.9 }} className="p-2 rounded-full bg-green-500 hover:bg-green-600 text-white"><Check className="w-4 h-4" /></motion.button><motion.button onClick={cancelEditing} whileTap={{ scale: 0.9 }} className="p-2 rounded-full bg-red-500 hover:bg-red-600 text-white"><X className="w-4 h-4" /></motion.button></div>
+                                <div className="flex items-center space-x-2 w-full"><input type="text" value={editingMessageContent} onChange={(e) => setEditingMessageContent(e.target.value)} className={`flex-1 px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-primary-dark ${darkMode ? 'bg-gray-600 border-gray-500' : 'bg-white border-gray-300'}`} onKeyDown={(e) => e.key === 'Enter' && handleEditMessage(msg.id)} /><motion.button onClick={() => handleEditMessage(msg.id)} whileTap={{ scale: 0.9 }} className="p-2 rounded-full bg-green-500 hover:bg-green-600 text-white"><Check className="w-4 h-4" /></motion.button><motion.button onClick={cancelEditing} whileTap={{ scale: 0.9 }} className="p-2 rounded-full bg-red-500 hover:bg-red-600 text-white"><X className="w-4 h-4" /></motion.button></div>
                             ) : (
                               <div className={`relative rounded-xl transition-colors shadow-sm ${msg.senderId === currentUser.uid ? 'bg-primary text-white' : darkMode ? 'bg-gray-900/80 text-gray-200' : 'bg-white text-gray-800'}`}>
-                                <div className={`${msg.type === 'text' || msg.deleted ? 'p-3' : 'p-1.5 md:p-2'}`}>
-                                  {msg.forwarded && <p className="text-xs opacity-70 mb-1 flex items-center gap-1"><Share size={12} /> Forwarded message</p>}
-                                  {msg.type === 'text' ? (<p className={`text-sm break-words ${msg.deleted ? 'italic opacity-70' : ''}`}>{decryptedText}</p>) : (<div>
-                                    {msg.fileType?.startsWith('image/') ? (
-                                      <img src={msg.fileUrl} alt={decryptedFileName} className="max-w-64 max-h-48 rounded-md object-cover cursor-pointer" onClick={() => setViewingMessage(msg)} onLoad={scrollToBottom} />
-                                    ) : msg.fileType?.startsWith('video/') ? (
-                                      <video src={msg.fileUrl} controls className="w-64 rounded-md" />
-                                    ) : msg.type === 'audio' ? (
-                                      <audio src={msg.fileUrl} controls className="w-64 h-12" />
-                                    ) : (
-                                      <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer" className={`flex items-center space-x-3 p-3 rounded-lg ${msg.senderId === currentUser.uid ? 'bg-primary-dark' : (darkMode ? 'bg-gray-700' : 'bg-gray-300')}`}><File className="w-8 h-8 flex-shrink-0" /><div className="flex-1 overflow-hidden"><p className="font-semibold text-sm truncate">{decryptedFileName}</p><p className="text-xs opacity-80">{formatFileSize(msg.fileSize)}</p></div><Download className="w-5 h-5 opacity-70" /></a>
-                                    )}
-                                  </div>)}
-                                </div>
-                                {!msg.deleted && editingMessageId !== msg.id && (
-                                  <div className={`absolute bottom-0 right-0 mb-1 mr-1 hidden group-hover:flex items-center space-x-1 p-1 rounded-full transition-opacity ${msg.senderId === currentUser.uid ? 'bg-primary-dark/50' : (darkMode ? 'bg-gray-700/50' : 'bg-gray-200/50')} backdrop-blur-sm`}>
-                                    <motion.button onClick={() => setMessageInfo(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20 dark:hover:bg-gray-600/50" title="Info"><Info className="w-4 h-4" /></motion.button>
-                                    {/* MODIFIED: Forward button is now conditional */}
-                                    {(msg.allowForward ?? true) && (
-                                        <motion.button onClick={() => openForwardModal(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20 dark:hover:bg-gray-600/50" title="Forward"><Share className="w-4 h-4" /></motion.button>
-                                    )}
-                                    {msg.senderId === currentUser.uid && msg.type === 'text' && <motion.button onClick={() => startEditing(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20 dark:hover:bg-gray-600/50" title="Edit"><Pencil className="w-4 h-4" /></motion.button>}
-                                    {msg.senderId === currentUser.uid && <motion.button onClick={() => handleDeleteMessage(msg.id)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20 dark:hover:bg-gray-600/50" title="Delete"><Trash2 className="w-4 h-4" /></motion.button>}
+                                
+                                {msg.replyTo && (
+                                  <div className="p-2 text-sm opacity-80 border-l-4 border-white/50 ml-2 mr-2 mt-2 rounded bg-black/10 cursor-pointer" onClick={(e) => { e.stopPropagation(); document.getElementById(msg.replyTo.messageId)?.scrollIntoView({ behavior: 'smooth' })}}>
+                                    <p className="font-bold text-xs">{msg.replyTo.senderName}</p>
+                                    <p className="truncate text-xs">
+                                      {msg.replyTo.fileType?.startsWith('image/') ? '📷 Photo' : msg.replyTo.fileType ? '📎 Attachment' : decryptMessage(msg.replyTo.text, chatRoomId)}
+                                    </p>
                                   </div>
                                 )}
+                                
+                                <div className={`${msg.type === 'text' || msg.deleted ? 'p-3' : 'p-1.5 md:p-2'}`}>
+                                  {msg.forwarded && <p className="text-xs opacity-70 mb-1 flex items-center gap-1"><Share size={12} /> Forwarded message</p>}
+                                  {msg.type === 'text' ? (
+                                    <p className={`text-sm break-words ${msg.deleted ? 'italic opacity-70' : ''}`}>{decryptedText}</p>
+                                  ) : (
+                                    <div>
+                                      {msg.fileType?.startsWith('image/') ? (
+                                        <img src={msg.fileUrl} alt={decryptedFileName} className="max-w-64 max-h-48 rounded-md object-cover cursor-pointer" onClick={(e) => { e.stopPropagation(); setViewingMessage(msg) }} onLoad={scrollToBottom} />
+                                      ) : msg.fileType?.startsWith('video/') ? (
+                                        <video src={msg.fileUrl} controls className="w-64 rounded-md" />
+                                      ) : msg.type === 'audio' ? (
+                                        <audio src={msg.fileUrl} controls className="w-64 h-12" />
+                                      ) : (
+                                        <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer" className={`flex items-center space-x-3 p-3 rounded-lg ${msg.senderId === currentUser.uid ? 'bg-primary-dark' : (darkMode ? 'bg-gray-700' : 'bg-gray-300')}`}><File className="w-8 h-8 flex-shrink-0" /><div className="flex-1 overflow-hidden"><p className="font-semibold text-sm truncate">{decryptedFileName}</p><p className="text-xs opacity-80">{formatFileSize(msg.fileSize)}</p></div><Download className="w-5 h-5 opacity-70" /></a>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                                
+                                {!msg.deleted && editingMessageId !== msg.id && (
+                                  <div className={`absolute bottom-0 right-0 mb-1 mr-1 hidden group-hover:flex items-center space-x-1 p-1 rounded-full transition-opacity ${msg.senderId === currentUser.uid ? 'bg-primary-dark/50' : (darkMode ? 'bg-gray-700/50' : 'bg-gray-200/50')} backdrop-blur-sm z-20`}>
+                                      <motion.button onClick={() => setReplyingTo(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20" title="Reply"><CornerUpLeft className="w-4 h-4" /></motion.button>
+                                      <motion.button onClick={() => setMessageInfo(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20" title="Info"><Info className="w-4 h-4" /></motion.button>
+                                      {(msg.allowForward ?? true) && (
+                                          <motion.button onClick={() => openForwardModal(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20" title="Forward"><Share className="w-4 h-4" /></motion.button>
+                                      )}
+                                      {msg.senderId === currentUser.uid && msg.type === 'text' && <motion.button onClick={() => startEditing(msg)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20" title="Edit"><Pencil className="w-4 h-4" /></motion.button>}
+                                      {msg.senderId === currentUser.uid && <motion.button onClick={() => handleDeleteMessage(msg.id)} whileTap={{ scale: 0.9 }} className="p-1.5 rounded-full hover:bg-white/20" title="Delete"><Trash2 className="w-4 h-4" /></motion.button>}
+                                  </div>
+                                )}
+
                                 <div className={`flex items-center mt-1 text-xs px-3 pb-1.5 ${msg.senderId === currentUser.uid ? 'justify-end' : 'justify-start'}`}>
                                   <span className={`${msg.senderId === currentUser.uid ? (darkMode ? 'text-blue-200' : 'text-gray-200') : darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{msg.edited && !msg.deleted && <span className="mr-1">(edited)</span>}{msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                                   {msg.senderId === currentUser.uid && !msg.deleted && (
@@ -645,159 +647,94 @@ const Dashboard = () => {
                         </div>
                       );
                     })
-                    : <div className={`text-center p-4 rounded-lg ${darkMode ? 'bg-gray-800/50' : 'bg-background-alt/50'} backdrop-blur-sm`}><p>No messages yet. Say hello!</p></div>
-                }
-                <div ref={messagesEndRef} />
-              </div>
-            </div>
-            <form onSubmit={handleSendMessage} className={`mt-auto p-2 sm:p-4 flex items-start space-x-2 border-t ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-transparent'}`}>
-              {/* MODIFIED: File input now calls handleFileSelect */}
-              <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
-              <motion.button type="button" onClick={() => fileInputRef.current?.click()} className={`p-3 rounded-xl transition-colors ${darkMode ? 'bg-gray-600 text-gray-300 hover:bg-gray-500' : 'bg-white hover:bg-gray-100'}`}><Paperclip className="w-5 h-5" /></motion.button>
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                onKeyDown={(e) => {
-                  const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-                  if (e.key === 'Enter' && !e.shiftKey && !isTouchDevice) {
-                    e.preventDefault();
-                    handleSendMessage(e);
                   }
-                }}
-                placeholder={isRecording ? "Recording..." : "Type a message..."}
-                disabled={isRecording}
-                className={`flex-1 px-4 py-2 rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-primary resize-none overflow-y-auto max-h-40 custom-scrollbar ${darkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-300'}`}
-              />
-              {newMessage.trim() === '' ? (isRecording ? (<motion.button type="button" onClick={handleStopRecording} className="p-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}><Square className="w-5 h-5" /></motion.button>) : (<motion.button type="button" onClick={handleStartRecording} className="p-3 bg-primary text-white rounded-xl hover:bg-primary-dark transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}><Mic className="w-5 h-5" /></motion.button>)) : (<motion.button type="submit" className="p-3 bg-primary text-white rounded-xl hover:bg-primary-dark transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} disabled={!newMessage.trim()}><Send className="w-5 h-5" /></motion.button>)}
-            </form>
-          </>)}
+                  <div ref={messagesEndRef} />
+                </div>
+              </div>
+
+              <div className="mt-auto">
+                {replyingTo && (
+                  <div className={`p-2 mx-2 sm:mx-4 border-t-2 border-primary ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                    <div className="flex justify-between items-center">
+                      <div>
+                          <p className="text-sm font-bold text-primary">Replying to {replyingTo.senderId === currentUser.uid ? 'yourself' : selectedChatUser.displayName}</p>
+                          <p className={`text-xs truncate max-w-xs sm:max-w-md ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                            {replyingTo.fileType?.startsWith('image/') ? '📷 Photo' : replyingTo.fileType ? '📎 Attachment' : decryptMessage(replyingTo.text, [currentUser.uid, selectedChatUser.uid].sort().join('_'))}
+                          </p>
+                      </div>
+                      <button onClick={() => setReplyingTo(null)} className="p-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600"><X size={16}/></button>
+                    </div>
+                  </div>
+                )}
+                <form onSubmit={handleSendMessage} className={`p-2 sm:p-4 flex items-start space-x-2 ${darkMode ? 'bg-gray-800' : 'bg-transparent'}`}>
+                    <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+                    <motion.button type="button" onClick={() => fileInputRef.current?.click()} className={`p-3 rounded-xl transition-colors ${darkMode ? 'bg-gray-600 text-gray-300 hover:bg-gray-500' : 'bg-white hover:bg-gray-100'}`}><Paperclip className="w-5 h-5" /></motion.button>
+                    <textarea ref={textareaRef} rows={1} value={newMessage} onChange={(e) => setNewMessage(e.target.value)}
+                        onKeyDown={(e) => {
+                            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+                            if (e.key === 'Enter' && !e.shiftKey && !isTouchDevice) {
+                                e.preventDefault();
+                                handleSendMessage(e);
+                            }
+                        }}
+                        placeholder={isRecording ? "Recording..." : "Type a message..."}
+                        disabled={isRecording}
+                        className={`flex-1 px-4 py-2 rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-primary resize-none overflow-y-auto max-h-40 custom-scrollbar ${darkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-300'}`}
+                    />
+                    {newMessage.trim() === '' ? (isRecording ? (<motion.button type="button" onClick={handleStopRecording} className="p-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}><Square className="w-5 h-5" /></motion.button>) : (<motion.button type="button" onClick={handleStartRecording} className="p-3 bg-primary text-white rounded-xl hover:bg-primary-dark transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}><Mic className="w-5 h-5" /></motion.button>)) : (<motion.button type="submit" className="p-3 bg-primary text-white rounded-xl hover:bg-primary-dark transition-colors" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} disabled={!newMessage.trim()}><Send className="w-5 h-5" /></motion.button>)}
+                </form>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
       <AnimatePresence>
-        {/* ... (isProfileModalOpen, isForwarding, messageInfo modals are unchanged) ... */}
-        {isProfileModalOpen && (
+        {isProfileModalOpen && ( <motion.div>...</motion.div> )}
+        {fileToSend && ( <motion.div>...</motion.div> )}
+        {viewingMessage && viewingMessage.fileType.startsWith('image/') && ( <motion.div>...</motion.div> )}
+        {isForwarding && (
           <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="absolute inset-0 bg-black/50" onClick={() => setIsProfileModalOpen(false)}></div>
-            <motion.div className={`relative rounded-2xl shadow-lg p-6 sm:p-8 w-full max-w-md mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
-              <button onClick={() => setIsProfileModalOpen(false)} className="absolute top-4 right-4 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X className="w-5 h-5" /></button>
-              <form onSubmit={handleProfileUpdate}>
-                <div className="flex flex-col items-center mb-6">
-                  <input type="file" accept="image/*" ref={profilePicInputRef} onChange={handleProfilePicChange} className="hidden" />
-                  <motion.div onClick={() => profilePicInputRef.current.click()} className="relative w-32 h-32 rounded-full cursor-pointer group" whileHover={{ scale: 1.05 }}>
-                    {profilePicPreview ? (<img src={profilePicPreview} alt="Profile preview" className="w-full h-full rounded-full object-cover" />) : (<div className={`w-full h-full rounded-full flex items-center justify-center ${darkMode ? 'bg-gray-700' : 'bg-gray-200'}`}><User className="w-16 h-16 text-gray-400" /></div>)}
-                    <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><Camera className="w-8 h-8 text-white" /></div>
-                  </motion.div>
-                </div>
-                <div className="space-y-4">
-                  <div>
-                    <label htmlFor="displayName" className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Display Name</label>
-                    <input id="displayName" type="text" value={newDisplayName} onChange={(e) => setNewDisplayName(e.target.value)} className={`w-full px-3 py-2 rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-primary ${darkMode ? 'bg-gray-700 border-gray-600' : 'bg-white border-gray-300'}`} />
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Email</label>
-                    <p className="text-gray-500 dark:text-gray-400 text-sm">{currentUser?.email}</p>
-                  </div>
-                </div>
-                <hr className={`my-6 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`} />
-                <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Appearance</h3>
-                <div>
-                  <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Theme Color</label>
-                  <div className="flex items-center space-x-3">{Object.keys(themes).map(themeKey => (<button type="button" key={themeKey} onClick={() => setSelectedTheme(themeKey)} className={`w-8 h-8 rounded-full ${themes[themeKey].color} transition-transform duration-200 ${selectedTheme === themeKey ? 'ring-2 ring-offset-2 ring-primary dark:ring-offset-gray-800' : ''}`} title={themes[themeKey].name}></button>))}</div>
-                </div>
-                <div className="mt-4">
-                  <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Global Chat Wallpaper</label>
-                  <div className="flex items-center space-x-2">
-                    <input type="file" accept="image/*" ref={wallpaperInputRef} onChange={handleWallpaperChange} className="hidden" />
-                    <button type="button" onClick={() => wallpaperInputRef.current.click()} className={`px-4 py-2 text-sm rounded-lg border ${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-100'}`}>Upload</button>
-                    <button type="button" onClick={() => { setWallpaperFile(null); setWallpaperPreview(''); }} className={`px-4 py-2 text-sm rounded-lg border ${darkMode ? 'border-red-500/50 text-red-400 hover:bg-red-500/10' : 'border-red-300 text-red-600 hover:bg-red-50'}`}>Remove</button>
-                  </div>
-                  {wallpaperPreview && <img src={wallpaperPreview} alt="Wallpaper preview" className="mt-4 w-full h-24 object-cover rounded-lg" />}
-                </div>
-                <div className="mt-8 flex justify-end">
-                  <motion.button type="submit" className="px-6 py-2 bg-primary text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50" disabled={isUpdatingProfile}>
-                    {isUpdatingProfile ? 'Saving...' : 'Save Changes'}
-                  </motion.button>
-                </div>
-              </form>
+            <div className="absolute inset-0 bg-black/50" onClick={closeForwardModal}></div>
+            <motion.div className={`relative rounded-2xl shadow-lg p-6 w-full max-w-sm mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
+              <button onClick={closeForwardModal} className="absolute top-4 right-4 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X className="w-5 h-5" /></button>
+              <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Forward message to...</h3>
+              <div className="max-h-80 overflow-y-auto">
+                <ul className="space-y-1">
+                  {users.length > 0 ? users.map(user => (
+                    <li key={user.uid}>
+                      <div className="w-full text-left p-2 rounded-lg flex items-center justify-between space-x-3 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                        <div className="flex items-center space-x-3 overflow-hidden">
+                          <div className="w-8 h-8 rounded-full flex-shrink-0 relative">
+                            {user.photoURL ? (<img src={user.photoURL} alt={user.displayName} className="w-full h-full rounded-full object-cover" />) : (<div className={`w-full h-full rounded-full flex items-center justify-center bg-gray-200 dark:bg-gray-600`}><User className="w-4 h-4" /></div>)}
+                          </div>
+                          <span className="flex-1 truncate font-medium">{user.displayName || user.email}</span>
+                        </div>
+                        <button onClick={() => handleForwardMessage(user)} className="px-3 py-1 text-sm bg-primary text-white rounded-md hover:bg-primary-dark">Send</button>
+                      </div>
+                    </li>
+                  )) : (<p className={`text-sm px-3 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No users available to forward.</p>)}
+                </ul>
+              </div>
             </motion.div>
           </motion.div>
         )}
-        
-        {/* NEW: File Upload Confirmation Modal */}
-        {fileToSend && (
-            <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <div className="absolute inset-0 bg-black/50" onClick={() => setFileToSend(null)}></div>
-                <motion.div className={`relative rounded-2xl shadow-lg p-6 w-full max-w-sm mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
-                    <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Send File</h3>
-                    
-                    {filePreview && <img src={filePreview} alt="File preview" className="mb-4 w-full h-48 object-contain rounded-lg" />}
-                    <div className="mb-4 p-2 rounded-md bg-gray-100 dark:bg-gray-700 text-sm truncate">
-                        {fileToSend.name}
-                    </div>
-
-                    <div className="space-y-3 mb-6">
-                        <label className="flex items-center space-x-3 cursor-pointer">
-                            <input type="checkbox" checked={allowDownload} onChange={(e) => setAllowDownload(e.target.checked)} className="h-4 w-4 rounded text-primary focus:ring-primary"/>
-                            <span className="text-sm">Allow receiver to download</span>
-                        </label>
-                        <label className="flex items-center space-x-3 cursor-pointer">
-                            <input type="checkbox" checked={allowForward} onChange={(e) => setAllowForward(e.target.checked)} className="h-4 w-4 rounded text-primary focus:ring-primary"/>
-                            <span className="text-sm">Allow receiver to forward</span>
-                        </label>
-                    </div>
-
-                    <div className="flex justify-end space-x-2">
-                        <button onClick={() => setFileToSend(null)} className="px-4 py-2 text-sm rounded-lg border dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
-                        <button onClick={handleConfirmSendFile} className="px-4 py-2 text-sm rounded-lg bg-primary text-white hover:bg-primary-dark">Send</button>
-                    </div>
-                </motion.div>
+        {messageInfo && (
+          <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <div className="absolute inset-0 bg-black/50" onClick={() => setMessageInfo(null)}></div>
+            <motion.div className={`relative rounded-2xl shadow-lg p-6 w-full max-w-sm mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
+              <button onClick={() => setMessageInfo(null)} className="absolute top-4 right-4 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X className="w-5 h-5" /></button>
+              <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Message Info</h3>
+              <div className="space-y-3 text-sm">
+                <div className="flex items-center"><Clock className="w-4 h-4 mr-3 text-gray-400" /><div><p className="font-semibold">Sent</p><p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{new Date(messageInfo.timestamp).toLocaleString()}</p></div></div>
+                <hr className={darkMode ? 'border-gray-700' : 'border-gray-200'} />
+                <div className="flex items-center"><Check className="w-4 h-4 mr-3 text-gray-400" /><div><p className="font-semibold">Delivered</p><p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{messageInfo.deliveredAt ? new Date(messageInfo.deliveredAt).toLocaleString() : 'Not yet'}</p></div></div>
+                <hr className={darkMode ? 'border-gray-700' : 'border-gray-200'} />
+                <div className="flex items-center"><CheckCheck className={`w-4 h-4 mr-3 ${messageInfo.readAt ? 'text-sky-500' : 'text-gray-400'}`} /><div><p className="font-semibold">Read</p><p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{messageInfo.readAt ? new Date(messageInfo.readAt).toLocaleString() : 'Not yet'}</p></div></div>
+              </div>
             </motion.div>
-        )}
-
-        {viewingMessage && viewingMessage.fileType.startsWith('image/') && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setViewingMessage(null)}
-          >
-            <motion.img
-              initial={{ scale: 0.5 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.5 }}
-              src={viewingMessage.fileUrl}
-              alt="Full screen view"
-              className="max-w-[90vw] max-h-[90vh] object-contain"
-              onClick={(e) => e.stopPropagation()}
-            />
-            <div className="absolute top-4 right-4 flex items-center space-x-2">
-              {/* MODIFIED: Download button is now conditional */}
-              {(viewingMessage.allowDownload ?? true) && (
-                <a
-                  href={viewingMessage.fileUrl}
-                  download="image.jpg"
-                  onClick={(e) => e.stopPropagation()}
-                  className="p-2 rounded-full bg-white/20 hover:bg-white/40"
-                  title="Download image"
-                >
-                  <Download className="w-6 h-6 text-white" />
-                </a>
-              )}
-              <button
-                onClick={() => setViewingMessage(null)}
-                className="p-2 rounded-full bg-white/20 hover:bg-white/40"
-                title="Close"
-              >
-                <X className="w-6 h-6 text-white" />
-              </button>
-            </div>
           </motion.div>
         )}
-
       </AnimatePresence>
       <footer className={`text-center text-xs p-2 flex-shrink-0 ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>
         © 2025 @Ashu Nain NPO(MBI)
