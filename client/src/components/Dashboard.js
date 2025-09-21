@@ -81,6 +81,7 @@ const Dashboard = () => {
   const [allowForward, setAllowForward] = useState(true);
   const [filePreview, setFilePreview] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
+  const [activeMessageMenu, setActiveMessageMenu] = useState(null);
 
   const handleLogout = async () => {
     try {
@@ -210,12 +211,12 @@ const Dashboard = () => {
   };
 
   const startEditing = (message) => {
+    setActiveMessageMenu(null);
     const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
     const decryptedText = decryptMessage(message.text, chatRoomId);
     setEditingMessageId(message.id);
     setEditingMessageContent(decryptedText);
   };
-
   const cancelEditing = () => { setEditingMessageId(null); setEditingMessageContent(""); };
   
   const handleEditMessage = async (messageId) => {
@@ -234,6 +235,7 @@ const Dashboard = () => {
   };
 
   const handleDeleteMessage = async (messageId) => {
+    setActiveMessageMenu(null);
     if (!window.confirm('Are you sure you want to delete this message?')) return;
     try {
       const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
@@ -690,9 +692,98 @@ const Dashboard = () => {
       </div>
 
       <AnimatePresence>
-        {isProfileModalOpen && ( <motion.div>...</motion.div> )}
-        {fileToSend && ( <motion.div>...</motion.div> )}
-        {viewingMessage && viewingMessage.fileType.startsWith('image/') && ( <motion.div>...</motion.div> )}
+        {isProfileModalOpen && (
+          <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <div className="absolute inset-0 bg-black/50" onClick={() => setIsProfileModalOpen(false)}></div>
+            <motion.div className={`relative rounded-2xl shadow-lg p-6 sm:p-8 w-full max-w-md mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
+              <button onClick={() => setIsProfileModalOpen(false)} className="absolute top-4 right-4 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X className="w-5 h-5" /></button>
+              <form onSubmit={handleProfileUpdate}>
+                <div className="flex flex-col items-center mb-6">
+                  <input type="file" accept="image/*" ref={profilePicInputRef} onChange={handleProfilePicChange} className="hidden" />
+                  <motion.div onClick={() => profilePicInputRef.current.click()} className="relative w-32 h-32 rounded-full cursor-pointer group" whileHover={{ scale: 1.05 }}>
+                    {profilePicPreview ? (<img src={profilePicPreview} alt="Profile preview" className="w-full h-full rounded-full object-cover" />) : (<div className={`w-full h-full rounded-full flex items-center justify-center ${darkMode ? 'bg-gray-700' : 'bg-gray-200'}`}><User className="w-16 h-16 text-gray-400" /></div>)}
+                    <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><Camera className="w-8 h-8 text-white" /></div>
+                  </motion.div>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="displayName" className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Display Name</label>
+                    <input id="displayName" type="text" value={newDisplayName} onChange={(e) => setNewDisplayName(e.target.value)} className={`w-full px-3 py-2 rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-primary ${darkMode ? 'bg-gray-700 border-gray-600' : 'bg-white border-gray-300'}`} />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Email</label>
+                    <p className="text-gray-500 dark:text-gray-400 text-sm">{currentUser?.email}</p>
+                  </div>
+                </div>
+                <hr className={`my-6 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`} />
+                <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Appearance</h3>
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Theme Color</label>
+                  <div className="flex items-center space-x-3">{Object.keys(themes).map(themeKey => (<button type="button" key={themeKey} onClick={() => setSelectedTheme(themeKey)} className={`w-8 h-8 rounded-full ${themes[themeKey].color} transition-transform duration-200 ${selectedTheme === themeKey ? 'ring-2 ring-offset-2 ring-primary dark:ring-offset-gray-800' : ''}`} title={themes[themeKey].name}></button>))}</div>
+                </div>
+                <div className="mt-4">
+                  <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Global Chat Wallpaper</label>
+                  <div className="flex items-center space-x-2">
+                    <input type="file" accept="image/*" ref={wallpaperInputRef} onChange={handleWallpaperChange} className="hidden" />
+                    <button type="button" onClick={() => wallpaperInputRef.current.click()} className={`px-4 py-2 text-sm rounded-lg border ${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-100'}`}>Upload</button>
+                    <button type="button" onClick={() => { setWallpaperFile(null); setWallpaperPreview(''); }} className={`px-4 py-2 text-sm rounded-lg border ${darkMode ? 'border-red-500/50 text-red-400 hover:bg-red-500/10' : 'border-red-300 text-red-600 hover:bg-red-50'}`}>Remove</button>
+                  </div>
+                  {wallpaperPreview && <img src={wallpaperPreview} alt="Wallpaper preview" className="mt-4 w-full h-24 object-cover rounded-lg" />}
+                </div>
+                <div className="mt-8 flex justify-end">
+                  <motion.button type="submit" className="px-6 py-2 bg-primary text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50" disabled={isUpdatingProfile}>
+                    {isUpdatingProfile ? 'Saving...' : 'Save Changes'}
+                  </motion.button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+        
+        {fileToSend && (
+            <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <div className="absolute inset-0 bg-black/50" onClick={() => setFileToSend(null)}></div>
+                <motion.div className={`relative rounded-2xl shadow-lg p-6 w-full max-w-sm mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
+                    <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Send File</h3>
+                    
+                    {filePreview && <img src={filePreview} alt="File preview" className="mb-4 w-full h-48 object-contain rounded-lg" />}
+                    <div className="mb-4 p-2 rounded-md bg-gray-100 dark:bg-gray-700 text-sm truncate">
+                        {fileToSend.name}
+                    </div>
+
+                    <div className="space-y-3 mb-6">
+                        <label className="flex items-center space-x-3 cursor-pointer">
+                            <input type="checkbox" checked={allowDownload} onChange={(e) => setAllowDownload(e.target.checked)} className="h-4 w-4 rounded text-primary focus:ring-primary"/>
+                            <span className="text-sm">Allow receiver to download</span>
+                        </label>
+                        <label className="flex items-center space-x-3 cursor-pointer">
+                            <input type="checkbox" checked={allowForward} onChange={(e) => setAllowForward(e.target.checked)} className="h-4 w-4 rounded text-primary focus:ring-primary"/>
+                            <span className="text-sm">Allow receiver to forward</span>
+                        </label>
+                    </div>
+
+                    <div className="flex justify-end space-x-2">
+                        <button onClick={() => setFileToSend(null)} className="px-4 py-2 text-sm rounded-lg border dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
+                        <button onClick={handleConfirmSendFile} className="px-4 py-2 text-sm rounded-lg bg-primary text-white hover:bg-primary-dark">Send</button>
+                    </div>
+                </motion.div>
+            </motion.div>
+        )}
+
+        {viewingMessage && viewingMessage.fileType.startsWith('image/') && (
+          <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setViewingMessage(null)}>
+            <motion.img initial={{ scale: 0.5 }} animate={{ scale: 1 }} exit={{ scale: 0.5 }} src={viewingMessage.fileUrl} alt="Full screen view" className="max-w-[90vw] max-h-[90vh] object-contain" onClick={(e) => e.stopPropagation()} />
+            <div className="absolute top-4 right-4 flex items-center space-x-2">
+              {(viewingMessage.allowDownload ?? true) && (
+                <a href={viewingMessage.fileUrl} download="image.jpg" onClick={(e) => e.stopPropagation()} className="p-2 rounded-full bg-white/20 hover:bg-white/40" title="Download image">
+                  <Download className="w-6 h-6 text-white" />
+                </a>
+              )}
+              <button onClick={() => setViewingMessage(null)} className="p-2 rounded-full bg-white/20 hover:bg-white/40" title="Close"><X className="w-6 h-6 text-white" /></button>
+            </div>
+          </motion.div>
+        )}
+
         {isForwarding && (
           <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <div className="absolute inset-0 bg-black/50" onClick={closeForwardModal}></div>
