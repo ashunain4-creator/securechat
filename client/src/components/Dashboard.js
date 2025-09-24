@@ -921,7 +921,7 @@ const Dashboard = () => {
         )}
       </AnimatePresence>
       <footer className={`text-center text-xs p-2 flex-shrink-0 ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>
-        © 2025 @Ashu Nain NPO(MBI)
+        © 2025 @Ashu Nain NPO(MUMBAI)
       </footer>
     </div>
   );
