@@ -627,7 +627,7 @@ const Dashboard = () => {
           </div>
           <div className={`p-3 flex-shrink-0 border-t ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
             <motion.button onClick={openProfileModal} className={`w-full text-left p-2 rounded-lg flex items-center space-x-3 transition-colors ${darkMode ? 'hover:bg-gray-700/50' : 'hover:bg-gray-200'}`}>
-              <div className="w-10 h-10 rounded-full flex-shrink-0 relative">{currentUser.photoURL ? (<img src={currentUser.photoURL} alt="Your profile" className="w-full h-full rounded-full object-cover" />) : (<div className={`w-full h-full rounded-full flex items-center justify-center ${darkMode ? 'bg-gray-600' : 'bg-gray-300'}`}><User className="w-5 h-5" /></div>)}</div>
+              <div className="w-10 h-10 rounded-full flex-shrink-0 relative">{currentUser.photoURL ? (<img src={currentUser.photoURL} alt="Your profile" className="w-full h-full rounded-full object-cover" />) : (<div className={`w-full h-10 rounded-full flex items-center justify-center ${darkMode ? 'bg-gray-600' : 'bg-gray-300'}`}><User className="w-5 h-5" /></div>)}</div>
               <div className="flex-1 overflow-hidden">
                 <p className="font-bold truncate text-sm">{currentUser.displayName || currentUser.email.split('@')[0]}</p>
                 <p className={`text-xs truncate ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Online</p>
@@ -738,7 +738,6 @@ const Dashboard = () => {
                   </div>
                 )}
                 
-                {/* --- Start of new typing indicator JSX --- */}
                 <AnimatePresence>
                   {isRecipientTyping && (
                     <motion.div
@@ -759,7 +758,6 @@ const Dashboard = () => {
                     </motion.div>
                   )}
                 </AnimatePresence>
-                {/* --- End of new typing indicator JSX --- */}
 
                 <form onSubmit={handleSendMessage} className={`p-2 sm:p-4 flex items-start space-x-2 ${darkMode ? 'bg-gray-800' : 'bg-transparent'}`}>
                   <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
@@ -921,7 +919,7 @@ const Dashboard = () => {
         )}
       </AnimatePresence>
       <footer className={`text-center text-xs p-2 flex-shrink-0 ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>
-        © 2025 @Ashu Nain NPO(MUMBAI)
+        © 2025 @Ashu Nain NPO(MBI)
       </footer>
     </div>
   );
