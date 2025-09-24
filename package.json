@@ -27,7 +27,8 @@
     "firebase-admin": "^13.5.0",
     "helmet": "^7.1.0",
     "morgan": "^1.10.0",
-    "react-google-recaptcha": "^3.1.0"
+    "react-google-recaptcha": "^3.1.0",
+    "simple-peer": "^9.11.1"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

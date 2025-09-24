@@ -4,14 +4,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  LogOut, User, MessageSquare, Paperclip, Send, File, Download, X, Sun, Moon, Trash2, Check, CheckCheck, Pencil, Mic, Square, Camera, Search, Share, ArrowLeft, Info, Clock, CornerUpLeft
+  LogOut, User, MessageSquare, Paperclip, Send, File, Download, X, Sun, Moon, Trash2, Check, CheckCheck, Pencil, Mic, Square, Camera, Search, Share, ArrowLeft, Info, Clock, CornerUpLeft, Phone, PhoneOff, Video, PhoneCall
 } from 'lucide-react';
 import { storage, db } from '../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
-  collection, addDoc, onSnapshot, query, orderBy, getDocs, where, doc, writeBatch, updateDoc, getDoc, limit, setDoc
+  collection, addDoc, onSnapshot, query, orderBy, getDocs, where, doc, writeBatch, updateDoc, getDoc, limit, setDoc, deleteDoc
 } from 'firebase/firestore';
 import { updateProfile } from "firebase/auth";
+import Peer from 'simple-peer';
 
 const themes = {
   blue: { name: 'Blue', color: 'bg-blue-500', config: { '--color-primary-DEFAULT': '59 130 246', '--color-primary-light': '219 234 254', '--color-primary-dark': '29 78 216', '--color-background-alt': '239 246 255' } },
@@ -83,10 +84,17 @@ const Dashboard = () => {
   const [replyingTo, setReplyingTo] = useState(null);
   const [activeMessageMenu, setActiveMessageMenu] = useState(null);
   
-  // --- Start of new code for typing indicator ---
   const [isRecipientTyping, setIsRecipientTyping] = useState(false);
   const typingTimeoutRef = useRef(null);
-  // --- End of new code for typing indicator ---
+  
+  // --- Start of new code for voice calling ---
+  const [isCalling, setIsCalling] = useState(false);
+  const [callState, setCallState] = useState('idle'); // 'idle', 'calling', 'ringing', 'in-call'
+  const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
+  const peerRef = useRef(null);
+  const audioRef = useRef(null);
+  // --- End of new code for voice calling ---
 
   const handleLogout = async () => {
     try {
@@ -429,6 +437,151 @@ const Dashboard = () => {
     }
   }, [theme]);
 
+  // --- Start of new voice call functions ---
+  const startCall = async () => {
+    if (!selectedChatUser) {
+      setNotification({ type: 'error', message: 'Please select a user to call.' });
+      setTimeout(() => setNotification(null), 3000);
+      return;
+    }
+    setCallState('calling');
+    setIsCalling(true);
+    setNotification({ type: 'info', message: 'Calling ' + (selectedChatUser.displayName || selectedChatUser.email) });
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+
+      const callRef = doc(db, 'call_sessions', `${currentUser.uid}_${selectedChatUser.uid}`);
+      await setDoc(callRef, {
+        callerId: currentUser.uid,
+        receiverId: selectedChatUser.uid,
+        status: 'ringing',
+        offer: null,
+        answer: null,
+      }, { merge: true });
+
+      const peer = new Peer({
+        initiator: true,
+        trickle: false,
+        stream: localStreamRef.current,
+      });
+      peerRef.current = peer;
+
+      peer.on('signal', async (data) => {
+        await updateDoc(callRef, { offer: JSON.stringify(data) });
+      });
+
+      peer.on('stream', remoteStream => {
+        remoteStreamRef.current = remoteStream;
+        if (audioRef.current) {
+          audioRef.current.srcObject = remoteStream;
+        }
+        setCallState('in-call');
+        setNotification({ type: 'success', message: 'Call established!' });
+      });
+
+      peer.on('close', () => {
+        endCall();
+        setNotification({ type: 'error', message: 'Call ended.' });
+      });
+
+      peer.on('error', err => {
+        console.error('Peer connection error:', err);
+        endCall();
+        setNotification({ type: 'error', message: 'Call failed.' });
+      });
+
+    } catch (error) {
+      console.error("Failed to start call:", error);
+      endCall();
+      setNotification({ type: 'error', message: 'Microphone access denied or call failed.' });
+    }
+  };
+
+  const endCall = async () => {
+    if (peerRef.current) {
+      peerRef.current.destroy();
+    }
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+    }
+    if (audioRef.current) {
+      audioRef.current.srcObject = null;
+    }
+    setIsCalling(false);
+    setCallState('idle');
+    setNotification(null);
+
+    // Clean up call session document
+    const callRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
+    const callRef = doc(db, 'call_sessions', callRoomId);
+    try {
+        await deleteDoc(callRef);
+    } catch (err) {
+        console.error("Failed to delete call session:", err);
+    }
+  };
+  
+  const acceptCall = async (offerData) => {
+    setCallState('in-call');
+    setIsCalling(true);
+    setNotification({ type: 'info', message: 'Connecting...' });
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+
+      const peer = new Peer({
+        initiator: false,
+        trickle: false,
+        stream: localStreamRef.current,
+      });
+      peerRef.current = peer;
+
+      peer.on('signal', async (data) => {
+        const callRoomId = [selectedChatUser.uid, currentUser.uid].sort().join('_');
+        const callRef = doc(db, 'call_sessions', callRoomId);
+        await updateDoc(callRef, { answer: JSON.stringify(data) });
+      });
+
+      peer.on('stream', remoteStream => {
+        remoteStreamRef.current = remoteStream;
+        if (audioRef.current) {
+          audioRef.current.srcObject = remoteStream;
+        }
+        setCallState('in-call');
+        setNotification({ type: 'success', message: 'Call established!' });
+      });
+
+      peer.on('close', () => {
+        endCall();
+        setNotification({ type: 'error', message: 'Call ended.' });
+      });
+
+      peer.on('error', err => {
+        console.error('Peer connection error:', err);
+        endCall();
+        setNotification({ type: 'error', message: 'Call failed.' });
+      });
+
+      peer.signal(JSON.parse(offerData));
+    } catch (error) {
+      console.error("Failed to accept call:", error);
+      endCall();
+      setNotification({ type: 'error', message: 'Microphone access denied or call failed.' });
+    }
+  };
+  
+  const declineCall = async (callId) => {
+    setCallState('idle');
+    setNotification(null);
+    const callRef = doc(db, 'call_sessions', callId);
+    await deleteDoc(callRef);
+  };
+  
+  // --- End of new voice call functions ---
+
   useEffect(() => {
     if (!currentUser) return;
     const fetchInitialData = async () => {
@@ -530,9 +683,6 @@ const Dashboard = () => {
     return () => unsubscribers.forEach(unsub => unsub());
   }, [users, currentUser, selectedChatUser]);
 
-  // --- Start of new useEffects for typing indicator ---
-
-  // Effect to update the current user's typing status in Firestore
   useEffect(() => {
     const updateTypingStatus = async (isTyping) => {
       if (!selectedChatUser) return;
@@ -555,7 +705,7 @@ const Dashboard = () => {
       updateTypingStatus(true);
       typingTimeoutRef.current = setTimeout(() => {
         updateTypingStatus(false);
-      }, 2000); // User is considered "stopped" after 2 seconds
+      }, 2000);
     } else {
       updateTypingStatus(false);
     }
@@ -564,12 +714,10 @@ const Dashboard = () => {
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
-      // Cleanup: ensure typing status is false when chat changes or component unmounts
       updateTypingStatus(false);
     };
   }, [newMessage, selectedChatUser, currentUser]);
 
-  // Effect to listen for the other user's typing status
   useEffect(() => {
     if (!selectedChatUser) return;
 
@@ -591,8 +739,36 @@ const Dashboard = () => {
       setIsRecipientTyping(false);
     };
   }, [selectedChatUser, currentUser]);
+  
+  // --- New useEffect for incoming calls ---
+  useEffect(() => {
+    if (!currentUser) return;
 
-  // --- End of new useEffects for typing indicator ---
+    const q = query(collection(db, 'call_sessions'), where('receiverId', '==', currentUser.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach(change => {
+        if (change.type === 'added' || change.type === 'modified') {
+          const callData = change.doc.data();
+          if (callData.status === 'ringing') {
+            const callerId = callData.callerId;
+            const caller = users.find(u => u.uid === callerId);
+            if (caller && callState === 'idle') {
+              setSelectedChatUser(caller);
+              setCallState('ringing');
+              setNotification({ type: 'info', message: `Incoming call from ${caller.displayName || caller.email}` });
+            }
+          }
+          if (callData.answer && peerRef.current) {
+            peerRef.current.signal(JSON.parse(callData.answer));
+          }
+        }
+      });
+    });
+
+    return () => unsubscribe();
+  }, [currentUser, users, callState]);
+  // --- End of new useEffect for incoming calls ---
+
 
   if (!currentUser) { return (<div className="flex items-center justify-center min-h-screen bg-gray-900"><p className="text-lg text-gray-300">Loading Dashboard...</p></div>); }
 
@@ -614,6 +790,9 @@ const Dashboard = () => {
       </motion.header>
 
       {notification && (<motion.div initial={{ opacity: 0, y: -50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -50 }} className={`fixed top-20 right-4 z-50 px-6 py-3 rounded-lg shadow-lg ${notification.type === 'success' ? 'bg-green-500 text-white' : notification.type === 'info' ? 'bg-blue-500 text-white' : 'bg-red-500 text-white'}`}><div className="flex items-center space-x-2"><span>{notification.type === 'success' ? '✅' : notification.type === 'info' ? 'ℹ️' : '❌'}</span><span>{notification.message}</span></div></motion.div>)}
+      
+      {/* Audio element for the remote stream */}
+      <audio ref={audioRef} autoPlay style={{ display: 'none' }} />
 
       <div className="flex flex-1 overflow-hidden">
         <div className={`w-full md:w-72 flex-shrink-0 flex flex-col border-r transition-all duration-300 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} ${selectedChatUser ? 'hidden md:flex' : 'flex'}`}>
@@ -641,9 +820,14 @@ const Dashboard = () => {
             <div className="flex flex-col items-center justify-center h-full"><MessageSquare className={`w-16 h-16 mb-4 ${darkMode ? 'text-gray-600' : 'text-gray-300'}`} /><h3 className={`text-lg font-medium mb-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Select a user to start chatting</h3><p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Your messages will appear here.</p></div>
           ) : (
             <>
-              <div className={`flex items-center text-xl font-bold p-4 border-b ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-transparent border-gray-200/80'}`}>
-                <button onClick={() => setSelectedChatUser(null)} className={`md:hidden p-2 -ml-2 mr-2 rounded-full ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}><ArrowLeft size={20} /></button>
-                <h3>Chat with {selectedChatUser.displayName || selectedChatUser.email.split('@')[0]}</h3>
+              <div className={`flex items-center justify-between p-4 border-b ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-transparent border-gray-200/80'}`}>
+                <div className="flex items-center space-x-2">
+                  <button onClick={() => setSelectedChatUser(null)} className={`md:hidden p-2 -ml-2 mr-2 rounded-full ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}><ArrowLeft size={20} /></button>
+                  <h3 className="text-xl font-bold">Chat with {selectedChatUser.displayName || selectedChatUser.email.split('@')[0]}</h3>
+                </div>
+                <div>
+                  <motion.button onClick={startCall} className="p-2 rounded-full text-primary hover:bg-primary/20 transition-colors" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}><PhoneCall size={24} /></motion.button>
+                </div>
               </div>
               <div className={`chat-messages-container flex-1 overflow-y-auto p-4 space-y-4 bg-cover bg-center relative`} style={{ backgroundImage: wallpaper ? `url(${wallpaper})` : 'none' }}>
                 <div className="relative z-10 space-y-4">
@@ -917,6 +1101,33 @@ const Dashboard = () => {
             </motion.div>
           </motion.div>
         )}
+        
+        <AnimatePresence>
+            {callState === 'ringing' && (
+                <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    <motion.div className={`relative rounded-2xl shadow-lg p-6 w-full max-w-sm mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
+                        <div className="flex flex-col items-center space-y-4">
+                            <h3 className="text-xl font-bold">Incoming Call</h3>
+                            <p className="text-lg">from {selectedChatUser?.displayName || selectedChatUser?.email}</p>
+                            <div className="flex space-x-4">
+                                <motion.button onClick={() => acceptCall()} className="p-4 rounded-full bg-green-500 text-white hover:bg-green-600" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}><Phone size={24} /></motion.button>
+                                <motion.button onClick={() => declineCall(`${selectedChatUser.uid}_${currentUser.uid}`)} className="p-4 rounded-full bg-red-500 text-white hover:bg-red-600" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}><PhoneOff size={24} /></motion.button>
+                            </div>
+                        </div>
+                    </motion.div>
+                </motion.div>
+            )}
+            
+            {callState === 'in-call' && (
+                <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    <div className="flex flex-col items-center space-y-4">
+                        <h3 className="text-2xl font-bold text-white">In Call</h3>
+                        <p className="text-lg text-gray-300">with {selectedChatUser?.displayName || selectedChatUser?.email}</p>
+                        <motion.button onClick={endCall} className="p-4 rounded-full bg-red-500 text-white hover:bg-red-600" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}><PhoneOff size={24} /></motion.button>
+                    </div>
+                </motion.div>
+            )}
+        </AnimatePresence>
       </AnimatePresence>
       <footer className={`text-center text-xs p-2 flex-shrink-0 ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>
         © 2025 @Ashu Nain NPO(MBI)
