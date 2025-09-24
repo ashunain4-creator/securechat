@@ -375,7 +375,7 @@ const LoginPage = () => {
       <canvas ref={canvasRef} width="150" height="50" style={{ display: 'none' }}></canvas>
       
       <footer className="relative z-10 text-center p-4 text-white/60 text-sm">
-        copyrights @ASHU NAIN - NPO
+        copyrights @ASHU NAIN - NPO(MBI)
       </footer>
     </div>
   );
