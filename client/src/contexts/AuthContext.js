@@ -7,10 +7,10 @@ import {
   signOut,
   onAuthStateChanged,
   sendEmailVerification,
-  updateProfile // MODIFIED: Imported updateProfile
+  updateProfile 
 } from 'firebase/auth';
-import { auth, db } from '../firebase'; // MODIFIED: Imported db for Firestore
-import { doc, setDoc } from 'firebase/firestore'; // MODIFIED: Imported doc and setDoc for Firestore
+import { auth, db } from '../firebase';
+import { doc, setDoc } from 'firebase/firestore';
 
 const AuthContext = createContext();
 
@@ -24,77 +24,75 @@ export const AuthProvider = ({ children }) => {
   const [error, setError] = useState('');
 
   const login = async (email, password) => {
-    setError(''); // Clear previous errors
+    setError('');
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password); //
-      // Check if the user's email is verified after a successful sign-in.
-      if (!userCredential.user.emailVerified) { //
-        // If not verified, sign the user out immediately.
-        await signOut(auth); //
-        // Throw a custom error to be caught by the LoginPage component.
-        throw new Error('auth/email-not-verified'); //
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      if (!userCredential.user.emailVerified) {
+        await signOut(auth);
+        throw new Error('auth/email-not-verified');
       }
-      return userCredential; //
+      return userCredential;
     } catch (err) {
-      // Pass the error up to the component for handling.
-      throw err; //
+      throw err;
     }
   };
 
   const signup = async (email, password, name) => {
-    setError(''); //
+    setError('');
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password); //
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // NEW: Update the profile in Firebase Authentication to store the name
+      // Update the profile in Firebase Authentication to store the name
       await updateProfile(user, { displayName: name });
 
-      // NEW: Create a user document in the Firestore 'users' collection
-      // This is the critical step that makes the user appear in the chat list.
+      // Create a user document in the Firestore 'users' collection
+      // This makes the user appear in the chat list.
       await setDoc(doc(db, 'users', user.uid), {
         uid: user.uid,
         email: user.email,
         displayName: name,
         photoURL: '', // Default empty photo URL
-        preferences: { // Default preferences
+        preferences: { // Default preferences for new users
           theme: 'blue',
           wallpaper: '',
+          // --- Added default backup frequency ---
+          backupFrequency: 'off', 
         }
       });
 
-      await sendEmailVerification(user); //
-      return userCredential; //
+      await sendEmailVerification(user);
+      return userCredential;
     } catch (err) {
-      setError(err.message); //
-      throw err; //
+      setError(err.message);
+      throw err;
     }
   };
 
   const logout = () => {
-    return signOut(auth); //
+    return signOut(auth);
   };
 
   const sendVerificationEmail = async () => {
-    setError(''); //
+    setError('');
     try {
-      if (auth.currentUser) { //
-        await sendEmailVerification(auth.currentUser); //
+      if (auth.currentUser) {
+        await sendEmailVerification(auth.currentUser);
       } else {
-        throw new Error("No authenticated user to send verification email to."); //
+        throw new Error("No authenticated user to send verification email to.");
       }
     } catch (err) {
-      setError(err.message); //
-      throw err; //
+      setError(err.message);
+      throw err;
     }
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, user => { //
-      setCurrentUser(user); //
-      setLoading(false); //
+    const unsubscribe = onAuthStateChanged(auth, user => {
+      setCurrentUser(user);
+      setLoading(false);
     });
-    return unsubscribe; //
+    return unsubscribe;
   }, []);
 
   const value = {
@@ -105,11 +103,12 @@ export const AuthProvider = ({ children }) => {
     sendVerificationEmail,
     error,
     setError
-  }; //
+  };
 
   return (
     <AuthContext.Provider value={value}>
       {!loading && children}
     </AuthContext.Provider>
-  ); //
+  );
 };
+

@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  LogOut, User, MessageSquare, Paperclip, Send, File, Download, X, Sun, Moon, Trash2, Check, CheckCheck, Pencil, Mic, Square, Camera, Search, Share, ArrowLeft, Info, Clock, CornerUpLeft
+  LogOut, User, MessageSquare, Paperclip, Send, File, Download, X, Sun, Moon, Trash2, Check, CheckCheck, Pencil, Mic, Square, Camera, Search, Share, ArrowLeft, Info, Clock, CornerUpLeft, Database
 } from 'lucide-react';
 import { storage, db } from '../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -17,6 +17,13 @@ const themes = {
   blue: { name: 'Blue', color: 'bg-blue-500', config: { '--color-primary-DEFAULT': '59 130 246', '--color-primary-light': '219 234 254', '--color-primary-dark': '29 78 216', '--color-background-alt': '239 246 255' } },
   green: { name: 'Green', color: 'bg-green-500', config: { '--color-primary-DEFAULT': '34 197 94', '--color-primary-light': '220 252 231', '--color-primary-dark': '22 101 52', '--color-background-alt': '240 253 244' } },
   purple: { name: 'Purple', color: 'bg-purple-500', config: { '--color-primary-DEFAULT': '168 85 247', '--color-primary-light': '243 232 255', '--color-primary-dark': '107 33 168', '--color-background-alt': '250 245 255' } },
+};
+
+const disappearingMessageDurations = {
+  off: { label: 'Off', duration: 0 },
+  '24h': { label: '24 hours', duration: 24 * 60 * 60 * 1000 },
+  '7d': { label: '7 days', duration: 7 * 24 * 60 * 60 * 1000 },
+  '30d': { label: '30 days', duration: 30 * 24 * 60 * 60 * 1000 },
 };
 
 const getSecretKey = (chatRoomId) => {
@@ -82,11 +89,13 @@ const Dashboard = () => {
   const [filePreview, setFilePreview] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
   const [activeMessageMenu, setActiveMessageMenu] = useState(null);
-  
-  // --- Start of new code for typing indicator ---
   const [isRecipientTyping, setIsRecipientTyping] = useState(false);
   const typingTimeoutRef = useRef(null);
-  // --- End of new code for typing indicator ---
+  const [isDisappearingModalOpen, setIsDisappearingModalOpen] = useState(false);
+  const [currentChatConfig, setCurrentChatConfig] = useState(null);
+  const [userPreferences, setUserPreferences] = useState({});
+  const [selectedBackupFrequency, setSelectedBackupFrequency] = useState('off');
+
 
   const handleLogout = async () => {
     try {
@@ -134,6 +143,11 @@ const Dashboard = () => {
         type: 'text', text: encryptedText, senderId: currentUser.uid, timestamp: new Date().toISOString(),
         read: false, delivered: false, edited: false, deleted: false, readAt: null, deliveredAt: null,
       };
+
+      if (currentChatConfig?.disappearingMessages?.duration > 0) {
+        const duration = currentChatConfig.disappearingMessages.duration;
+        messageData.disappearAt = new Date(Date.now() + duration);
+      }
 
       if (replyingTo) {
         messageData.replyTo = {
@@ -195,6 +209,11 @@ const Dashboard = () => {
         read: false, delivered: false, edited: false, deleted: false, readAt: null, deliveredAt: null,
         allowDownload: allowDownload, allowForward: allowForward,
       };
+
+      if (currentChatConfig?.disappearingMessages?.duration > 0) {
+        const duration = currentChatConfig.disappearingMessages.duration;
+        messageData.disappearAt = new Date(Date.now() + duration);
+      }
 
       if (replyingTo) {
         messageData.replyTo = {
@@ -302,10 +321,17 @@ const Dashboard = () => {
       await uploadBytes(storageRef, audioBlob);
       const downloadURL = await getDownloadURL(storageRef);
       const messagesRef = collection(db, 'chats', chatRoomId, 'messages');
-      await addDoc(messagesRef, {
+      const messageData = {
         type: 'audio', fileUrl: downloadURL, senderId: currentUser.uid, timestamp: new Date().toISOString(),
         read: false, delivered: false, edited: false, deleted: false, readAt: null, deliveredAt: null,
-      });
+      };
+
+      if (currentChatConfig?.disappearingMessages?.duration > 0) {
+        const duration = currentChatConfig.disappearingMessages.duration;
+        messageData.disappearAt = new Date(Date.now() + duration);
+      }
+
+      await addDoc(messagesRef, messageData);
       setNotification({ type: 'success', message: `Voice message sent!` });
       bringUserToTop(selectedChatUser.uid);
     } catch (error) {
@@ -315,8 +341,53 @@ const Dashboard = () => {
       setTimeout(() => setNotification(null), 3000);
     }
   };
+
+  const handleSetDisappearingTimer = async (duration) => {
+      if (!selectedChatUser) return;
+      const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
+      const chatRoomRef = doc(db, 'chats', chatRoomId);
+      const messagesRef = collection(db, 'chats', chatRoomId, 'messages');
   
-  const openProfileModal = () => { setNewDisplayName(currentUser.displayName || ''); setProfilePicFile(null); setProfilePicPreview(currentUser.photoURL || ''); setSelectedTheme(theme); setWallpaperFile(null); setWallpaperPreview(wallpaper); setIsProfileModalOpen(true); };
+      try {
+          await setDoc(chatRoomRef, {
+              disappearingMessages: {
+                  duration: duration,
+                  setBy: currentUser.uid,
+                  setAt: new Date().toISOString()
+              }
+          }, { merge: true });
+  
+          const durationEntry = Object.values(disappearingMessageDurations).find(d => d.duration === duration);
+          const durationText = durationEntry ? durationEntry.label.toLowerCase() : '';
+  
+          const systemMessageText = duration > 0
+              ? `${currentUser.displayName || 'You'} turned on disappearing messages. New messages will disappear from this chat after ${durationText}.`
+              : `${currentUser.displayName || 'You'} turned off disappearing messages.`;
+  
+          await addDoc(messagesRef, {
+              type: 'system',
+              text: systemMessageText,
+              timestamp: new Date().toISOString(),
+          });
+  
+          setIsDisappearingModalOpen(false);
+      } catch (error) {
+          console.error("Error setting disappearing messages timer:", error);
+          setNotification({ type: 'error', message: 'Failed to update settings.' });
+          setTimeout(() => setNotification(null), 3000);
+      }
+  };
+
+  const openProfileModal = () => { 
+    setNewDisplayName(currentUser.displayName || ''); 
+    setProfilePicFile(null); 
+    setProfilePicPreview(currentUser.photoURL || ''); 
+    setSelectedTheme(userPreferences.theme || 'blue'); 
+    setWallpaperFile(null); 
+    setWallpaperPreview(userPreferences.wallpaper || '');
+    setSelectedBackupFrequency(userPreferences.backupFrequency || 'off');
+    setIsProfileModalOpen(true); 
+  };
   
   const handleProfilePicChange = (e) => {
     const file = e.target.files[0];
@@ -360,10 +431,24 @@ const Dashboard = () => {
       if (newDisplayName !== currentUser.displayName) authUpdateData.displayName = newDisplayName;
       if (photoURL !== currentUser.photoURL) authUpdateData.photoURL = photoURL;
       if (Object.keys(authUpdateData).length > 0) await updateProfile(currentUser, authUpdateData);
+      
       const userDocRef = doc(db, 'users', currentUser.uid);
-      await updateDoc(userDocRef, { displayName: newDisplayName, photoURL: photoURL, preferences: { theme: selectedTheme, wallpaper: newWallpaperURL, } });
+      const updatedPreferences = {
+        theme: selectedTheme,
+        wallpaper: newWallpaperURL,
+        backupFrequency: selectedBackupFrequency,
+      };
+
+      await updateDoc(userDocRef, { 
+        displayName: newDisplayName, 
+        photoURL: photoURL, 
+        preferences: updatedPreferences 
+      });
+
       setTheme(selectedTheme);
       setWallpaper(newWallpaperURL);
+      setUserPreferences(updatedPreferences);
+
       setNotification({ type: 'success', message: 'Profile updated successfully!' });
       setIsProfileModalOpen(false);
     } catch (error) {
@@ -435,10 +520,13 @@ const Dashboard = () => {
       try {
         const userDocRef = doc(db, 'users', currentUser.uid);
         const userDocSnap = await getDoc(userDocRef);
-        if (userDocSnap.exists() && userDocSnap.data().preferences) {
-          const prefs = userDocSnap.data().preferences;
-          setTheme(prefs.theme || 'blue');
-          setWallpaper(prefs.wallpaper || '');
+        if (userDocSnap.exists()) {
+          const data = userDocSnap.data();
+          if (data.preferences) {
+            setUserPreferences(data.preferences);
+            setTheme(data.preferences.theme || 'blue');
+            setWallpaper(data.preferences.wallpaper || '');
+          }
         }
         const usersRef = collection(db, 'users');
         const querySnapshot = await getDocs(usersRef);
@@ -530,9 +618,6 @@ const Dashboard = () => {
     return () => unsubscribers.forEach(unsub => unsub());
   }, [users, currentUser, selectedChatUser]);
 
-  // --- Start of new useEffects for typing indicator ---
-
-  // Effect to update the current user's typing status in Firestore
   useEffect(() => {
     const updateTypingStatus = async (isTyping) => {
       if (!selectedChatUser) return;
@@ -555,7 +640,7 @@ const Dashboard = () => {
       updateTypingStatus(true);
       typingTimeoutRef.current = setTimeout(() => {
         updateTypingStatus(false);
-      }, 2000); // User is considered "stopped" after 2 seconds
+      }, 2000);
     } else {
       updateTypingStatus(false);
     }
@@ -564,14 +649,16 @@ const Dashboard = () => {
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
-      // Cleanup: ensure typing status is false when chat changes or component unmounts
       updateTypingStatus(false);
     };
   }, [newMessage, selectedChatUser, currentUser]);
 
-  // Effect to listen for the other user's typing status
   useEffect(() => {
-    if (!selectedChatUser) return;
+    if (!selectedChatUser || !currentUser) {
+      setCurrentChatConfig(null);
+      setIsRecipientTyping(false);
+      return;
+    };
 
     const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
     const chatRoomRef = doc(db, 'chats', chatRoomId);
@@ -579,20 +666,21 @@ const Dashboard = () => {
     const unsubscribe = onSnapshot(chatRoomRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
+        setCurrentChatConfig(data);
         const recipientIsTyping = data.typingStatus?.[selectedChatUser.uid] || false;
         setIsRecipientTyping(recipientIsTyping);
       } else {
+        setCurrentChatConfig(null);
         setIsRecipientTyping(false);
       }
     });
 
     return () => {
       unsubscribe();
+      setCurrentChatConfig(null);
       setIsRecipientTyping(false);
     };
   }, [selectedChatUser, currentUser]);
-
-  // --- End of new useEffects for typing indicator ---
 
   if (!currentUser) { return (<div className="flex items-center justify-center min-h-screen bg-gray-900"><p className="text-lg text-gray-300">Loading Dashboard...</p></div>); }
 
@@ -641,15 +729,34 @@ const Dashboard = () => {
             <div className="flex flex-col items-center justify-center h-full"><MessageSquare className={`w-16 h-16 mb-4 ${darkMode ? 'text-gray-600' : 'text-gray-300'}`} /><h3 className={`text-lg font-medium mb-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Select a user to start chatting</h3><p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Your messages will appear here.</p></div>
           ) : (
             <>
-              <div className={`flex items-center text-xl font-bold p-4 border-b ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-transparent border-gray-200/80'}`}>
-                <button onClick={() => setSelectedChatUser(null)} className={`md:hidden p-2 -ml-2 mr-2 rounded-full ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}><ArrowLeft size={20} /></button>
-                <h3>Chat with {selectedChatUser.displayName || selectedChatUser.email.split('@')[0]}</h3>
+              <div className={`flex items-center justify-between text-xl font-bold p-4 border-b ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-transparent border-gray-200/80'}`}>
+                <div className="flex items-center">
+                  <button onClick={() => setSelectedChatUser(null)} className={`md:hidden p-2 -ml-2 mr-2 rounded-full ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}><ArrowLeft size={20} /></button>
+                  <h3>Chat with {selectedChatUser.displayName || selectedChatUser.email.split('@')[0]}</h3>
+                </div>
+                <div className="flex items-center">
+                    <motion.button onClick={() => setIsDisappearingModalOpen(true)} className={`p-2 rounded-full relative ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }} title="Disappearing Messages">
+                        <Clock size={20} />
+                        {currentChatConfig?.disappearingMessages?.duration > 0 && (
+                            <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-primary ring-2 ring-white dark:ring-gray-800" />
+                        )}
+                    </motion.button>
+                </div>
               </div>
               <div className={`chat-messages-container flex-1 overflow-y-auto p-4 space-y-4 bg-cover bg-center relative`} style={{ backgroundImage: wallpaper ? `url(${wallpaper})` : 'none' }}>
                 <div className="relative z-10 space-y-4">
                   {loadingChat
                     ? <div />
                     : messages.map((msg) => {
+                      if (msg.type === 'system') {
+                        return (
+                          <div key={msg.id} className="text-center my-2">
+                            <span className={`text-xs px-3 py-1.5 rounded-full ${darkMode ? 'bg-gray-900 text-gray-300' : 'bg-blue-100 text-blue-800'}`}>
+                              {msg.text}
+                            </span>
+                          </div>
+                        );
+                      }
                       const chatRoomId = [currentUser.uid, selectedChatUser.uid].sort().join('_');
                       const decryptedText = msg.type === 'text' ? decryptMessage(msg.text, chatRoomId) : '';
                       const decryptedFileName = msg.type === 'file' && msg.fileName ? decryptMessage(msg.fileName, chatRoomId) : '';
@@ -738,7 +845,6 @@ const Dashboard = () => {
                   </div>
                 )}
                 
-                {/* --- Start of new typing indicator JSX --- */}
                 <AnimatePresence>
                   {isRecipientTyping && (
                     <motion.div
@@ -759,7 +865,6 @@ const Dashboard = () => {
                     </motion.div>
                   )}
                 </AnimatePresence>
-                {/* --- End of new typing indicator JSX --- */}
 
                 <form onSubmit={handleSendMessage} className={`p-2 sm:p-4 flex items-start space-x-2 ${darkMode ? 'bg-gray-800' : 'bg-transparent'}`}>
                   <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
@@ -790,7 +895,7 @@ const Dashboard = () => {
             <div className="absolute inset-0 bg-black/50" onClick={() => setIsProfileModalOpen(false)}></div>
             <motion.div className={`relative rounded-2xl shadow-lg p-6 sm:p-8 w-full max-w-md mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
               <button onClick={() => setIsProfileModalOpen(false)} className="absolute top-4 right-4 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X className="w-5 h-5" /></button>
-              <form onSubmit={handleProfileUpdate}>
+              <form onSubmit={handleProfileUpdate} className="max-h-[80vh] overflow-y-auto custom-scrollbar pr-2">
                 <div className="flex flex-col items-center mb-6">
                   <input type="file" accept="image/*" ref={profilePicInputRef} onChange={handleProfilePicChange} className="hidden" />
                   <motion.div onClick={() => profilePicInputRef.current.click()} className="relative w-32 h-32 rounded-full cursor-pointer group" whileHover={{ scale: 1.05 }}>
@@ -823,6 +928,29 @@ const Dashboard = () => {
                   </div>
                   {wallpaperPreview && <img src={wallpaperPreview} alt="Wallpaper preview" className="mt-4 w-full h-24 object-cover rounded-lg" />}
                 </div>
+                
+                <hr className={`my-6 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`} />
+                <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Backup Settings</h3>
+                <div className="space-y-3">
+                    <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                        Choose how often you want to back up your chat history. This requires a backend setup (e.g., Cloud Functions) to execute.
+                    </p>
+                    <div className="flex flex-col space-y-2">
+                        {['off', 'daily', 'weekly', 'monthly'].map((freq) => (
+                             <label key={freq} className="flex items-center p-2 rounded-lg cursor-pointer transition-colors hover:bg-gray-100 dark:hover:bg-gray-700">
+                                <input
+                                    type="radio"
+                                    name="backup-frequency"
+                                    className="h-4 w-4 text-primary focus:ring-primary border-gray-300 dark:border-gray-600"
+                                    checked={selectedBackupFrequency === freq}
+                                    onChange={() => setSelectedBackupFrequency(freq)}
+                                />
+                                <span className="ml-3 text-sm font-medium capitalize">{freq}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
                 <div className="mt-8 flex justify-end">
                   <motion.button type="submit" className="px-6 py-2 bg-primary text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50" disabled={isUpdatingProfile}>
                     {isUpdatingProfile ? 'Saving...' : 'Save Changes'}
@@ -833,6 +961,33 @@ const Dashboard = () => {
           </motion.div>
         )}
         
+        {isDisappearingModalOpen && selectedChatUser && (
+            <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <div className="absolute inset-0 bg-black/50" onClick={() => setIsDisappearingModalOpen(false)}></div>
+                <motion.div className={`relative rounded-2xl shadow-lg p-6 w-full max-w-sm mx-4 ${darkMode ? 'bg-gray-800 text-gray-200' : 'bg-white text-gray-800'}`} variants={modalVariants} initial="hidden" animate="visible" exit="exit">
+                    <button onClick={() => setIsDisappearingModalOpen(false)} className={`absolute top-4 right-4 p-2 rounded-full ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}><X className="w-5 h-5" /></button>
+                    <h3 className={`text-lg font-bold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Disappearing Messages</h3>
+                    <p className={`text-sm mb-6 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                        For more privacy, turn on disappearing messages. When enabled, new messages sent in this chat will disappear after your selected duration.
+                    </p>
+                    <div className="space-y-2">
+                        {Object.entries(disappearingMessageDurations).map(([key, { label, duration }]) => (
+                            <label key={key} className="flex items-center p-3 rounded-lg cursor-pointer transition-colors hover:bg-gray-100 dark:hover:bg-gray-700">
+                                <input
+                                    type="radio"
+                                    name="disappearing-duration"
+                                    className="h-4 w-4 text-primary focus:ring-primary border-gray-300 dark:border-gray-600"
+                                    checked={currentChatConfig?.disappearingMessages?.duration === duration}
+                                    onChange={() => handleSetDisappearingTimer(duration)}
+                                />
+                                <span className="ml-3 text-sm font-medium">{label}</span>
+                            </label>
+                        ))}
+                    </div>
+                </motion.div>
+            </motion.div>
+        )}
+
         {fileToSend && (
             <motion.div className="fixed inset-0 z-50 flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 <div className="absolute inset-0 bg-black/50" onClick={() => setFileToSend(null)}></div>
@@ -928,3 +1083,4 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
+
